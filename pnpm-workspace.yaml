@@ -1,0 +1,10 @@
+packages:
+  - packages/*
+  - agent
+  - subgraph
+  - web
+
+onlyBuiltDependencies:
+  - '@graphprotocol/graph-cli'
+  - esbuild
+  - sharp
