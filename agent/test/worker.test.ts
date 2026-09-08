@@ -35,6 +35,10 @@ function job(overrides: Partial<JournalRequest> = {}): JournalRequest {
     state: 'queued',
     providerOperationId: null,
     txHash: null,
+    rule: null,
+    attemptedUnits: null,
+    headroomUnits: null,
+    errorCode: null,
     leaseOwner: 'worker-1',
     ...overrides,
   };

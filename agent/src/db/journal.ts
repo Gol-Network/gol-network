@@ -15,6 +15,10 @@ export interface JournalRequest {
   state: RequestState;
   providerOperationId: string | null;
   txHash: Hex32 | null;
+  rule: string | null;
+  attemptedUnits: string | null;
+  headroomUnits: string | null;
+  errorCode: string | null;
   leaseOwner: string | null;
 }
 
@@ -227,6 +231,10 @@ function mapRow(row: Record<string, unknown>): JournalRequest {
     state: String(row.state) as RequestState,
     providerOperationId: row.provider_operation_id ? String(row.provider_operation_id) : null,
     txHash: row.tx_hash ? (String(row.tx_hash).trim() as Hex32) : null,
+    rule: row.rule ? String(row.rule) : null,
+    attemptedUnits: row.attempted_units ? String(row.attempted_units) : null,
+    headroomUnits: row.headroom_units ? String(row.headroom_units) : null,
+    errorCode: row.error_code ? String(row.error_code) : null,
     leaseOwner: row.lease_owner ? String(row.lease_owner) : null,
   };
 }

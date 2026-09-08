@@ -107,6 +107,37 @@ function LiveGolApp() {
   useEffect(() => {
     void refreshActivity();
   }, [refreshActivity]);
+  useEffect(() => {
+    if (!authenticated || !account) return;
+    const requestId = window.localStorage.getItem(pendingRequestKey(account.accountAddress));
+    if (!requestId) return;
+    setRunState('Recovering pending request from durable journal');
+    void pollRequest(requestId, account);
+  }, [authenticated, account, authedFetch]);
+
+  async function pollRequest(requestId: string, selected: AccountView) {
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      await pause(2_000);
+      const result = await authedFetch(`/api/requests/${requestId}`);
+      const state = String(result.state);
+      setRunState(paymentLabel(state, result));
+      if (
+        [
+          'needs_clarification',
+          'executed',
+          'refused',
+          'signer_blocked',
+          'technical_failure',
+          'unknown',
+        ].includes(state)
+      ) {
+        window.localStorage.removeItem(pendingRequestKey(selected.accountAddress));
+        await Promise.all([refreshAccount(), refreshActivity(selected)]);
+        return;
+      }
+    }
+    setRunState('Still pending. This request will recover after refresh.');
+  }
 
   async function ownerProvider() {
     const preferred =
@@ -183,6 +214,7 @@ function LiveGolApp() {
       return setRunState('Create an active mandate first');
     try {
       const requestId = randomRequestId();
+      window.localStorage.setItem(pendingRequestKey(account.accountAddress), requestId);
       setRunState('Queued in durable payment journal');
       await authedFetch('/api/instructions', {
         method: 'POST',
@@ -193,26 +225,7 @@ function LiveGolApp() {
           text: instruction,
         }),
       });
-      for (let attempt = 0; attempt < 30; attempt += 1) {
-        await pause(2_000);
-        const result = await authedFetch(`/api/requests/${requestId}`);
-        const state = String(result.state);
-        setRunState(paymentLabel(state, result));
-        if (
-          [
-            'needs_clarification',
-            'executed',
-            'refused',
-            'signer_blocked',
-            'technical_failure',
-            'unknown',
-          ].includes(state)
-        ) {
-          await Promise.all([refreshAccount(), refreshActivity(account)]);
-          return;
-        }
-      }
-      setRunState('Still pending. Refreshing preserves this request ID.');
+      await pollRequest(requestId, account);
     } catch (error) {
       setRunState(errorMessage(error));
     }
@@ -301,6 +314,7 @@ function LiveGolApp() {
 }
 
 function PreviewGolApp() {
+  const [loaded, setLoaded] = useState(false);
   const [records, setRecords] = useState<ActivityRecord[]>([]);
   const [instruction, setInstruction] = useState('Pay 40 USDC to Design contractor');
   const [runState, setRunState] = useState('Local preview only. No transaction will be submitted.');
@@ -334,11 +348,18 @@ function PreviewGolApp() {
         logout: () => undefined,
         label: 'Local preview',
       }}
-      account={null}
-      accountState="Set NEXT_PUBLIC_PRIVY_APP_ID to enable authenticated owner actions"
+      account={loaded ? previewAccount : null}
+      accountState={
+        loaded
+          ? 'Local fixture loaded. No chain read was performed'
+          : 'Set NEXT_PUBLIC_PRIVY_APP_ID to enable authenticated owner actions'
+      }
       recipient=""
       setRecipient={() => undefined}
-      configure={() => setRecords(previewRecords)}
+      configure={() => {
+        setLoaded(true);
+        setRecords(previewRecords);
+      }}
       instruction={instruction}
       setInstruction={setInstruction}
       runAgent={run}
@@ -354,6 +375,22 @@ function PreviewGolApp() {
     />
   );
 }
+
+const previewAccount: AccountView = {
+  state: 'ready',
+  ownerAddress: `0x${'c'.repeat(40)}`,
+  accountAddress: `0x${'d'.repeat(40)}`,
+  agentAddress: `0x${'a'.repeat(40)}`,
+  balanceUnits: '60000000',
+  activeMandateId: '1',
+  mandate: {
+    perPaymentCapUnits: '100000000',
+    cumulativeCapUnits: '100000000',
+    spentUnits: '40000000',
+    expiresAt: String(Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60),
+    revoked: false,
+  },
+};
 
 type DashboardProps = {
   auth: {
@@ -718,6 +755,10 @@ function errorMessage(error: unknown) {
 }
 function pause(milliseconds: number) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function pendingRequestKey(account: string) {
+  return `gol:pending:${account.toLowerCase()}`;
 }
 function randomRequestId() {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
