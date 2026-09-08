@@ -1,0 +1,20 @@
+{
+  "status": "not_deployed",
+  "chainId": 5042002,
+  "network": "arc-testnet",
+  "usdc": "0x3600000000000000000000000000000000000000",
+  "factory": null,
+  "account": null,
+  "deploymentBlock": null,
+  "deploymentTransaction": null,
+  "compiler": "0.8.26",
+  "optimizer": {
+    "enabled": true,
+    "runs": 200
+  },
+  "evmVersion": "paris",
+  "sourceCommit": null,
+  "bytecodeHash": null,
+  "abiHash": null,
+  "verificationUrl": null
+}

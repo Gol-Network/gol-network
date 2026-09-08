@@ -1,0 +1,33 @@
+query Refusals($account: Bytes!, $first: Int!, $before: BigInt!) {
+  actions(
+    first: $first
+    orderBy: sequence
+    orderDirection: desc
+    where: { account: $account, outcome: "REFUSED", sequence_lt: $before }
+  ) {
+    id
+    requestId
+    agent
+    recipient
+    rule
+    reason
+    attempted
+    headroom
+    spentAfter
+    transactionHash
+    blockNumber
+    blockHash
+    timestamp
+    logIndex
+    sequence
+  }
+  _meta {
+    block {
+      number
+      hash
+      timestamp
+    }
+    hasIndexingErrors
+    deployment
+  }
+}

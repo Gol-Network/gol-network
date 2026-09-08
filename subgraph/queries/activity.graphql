@@ -1,0 +1,40 @@
+query Activity($account: Bytes!, $first: Int!, $before: BigInt!) {
+  actions(
+    first: $first
+    orderBy: sequence
+    orderDirection: desc
+    where: { account: $account, sequence_lt: $before }
+  ) {
+    id
+    requestId
+    mandate {
+      id
+      mandateId
+      cumulativeCap
+    }
+    agent
+    recipient
+    outcome
+    rule
+    reason
+    attempted
+    transferred
+    headroom
+    spentAfter
+    sequence
+    transactionHash
+    blockNumber
+    blockHash
+    timestamp
+    logIndex
+  }
+  _meta {
+    block {
+      number
+      hash
+      timestamp
+    }
+    hasIndexingErrors
+    deployment
+  }
+}

@@ -1,0 +1,41 @@
+type Account @entity(immutable: true) {
+  id: Bytes!
+  owner: Bytes!
+  createdAtBlock: BigInt!
+  createdAt: BigInt!
+}
+
+type Mandate @entity(immutable: false) {
+  id: ID!
+  account: Account!
+  mandateId: BigInt!
+  agent: Bytes!
+  perPaymentCap: BigInt!
+  cumulativeCap: BigInt!
+  spent: BigInt!
+  expiresAt: BigInt!
+  recipients: [Bytes!]!
+  revoked: Boolean!
+}
+
+type Action @entity(immutable: true) {
+  id: Bytes!
+  account: Account!
+  mandate: Mandate!
+  requestId: Bytes!
+  agent: Bytes!
+  recipient: Bytes!
+  outcome: String!
+  rule: String!
+  reason: String!
+  attempted: BigInt!
+  transferred: BigInt!
+  headroom: BigInt!
+  spentAfter: BigInt!
+  sequence: BigInt!
+  transactionHash: Bytes!
+  blockNumber: BigInt!
+  blockHash: Bytes!
+  timestamp: BigInt!
+  logIndex: BigInt!
+}

@@ -8,3 +8,5 @@ cache/
 out/
 subgraph/generated/
 subgraph/build/
+subgraph/tests/.latest.json
+subgraph/tests/.bin/

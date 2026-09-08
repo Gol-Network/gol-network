@@ -1,0 +1,52 @@
+specVersion: 1.3.0
+indexerHints:
+  prune: auto
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum/contract
+    name: GolAccountFactory
+    network: arc-testnet
+    source:
+      address: '0x0000000000000000000000000000000000000001'
+      abi: GolAccountFactory
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - Account
+      abis:
+        - name: GolAccountFactory
+          file: ./abis/GolAccountFactory.json
+      eventHandlers:
+        - event: AccountCreated(indexed address,indexed address)
+          handler: handleAccountCreated
+      file: ./src/factory.ts
+templates:
+  - kind: ethereum/contract
+    name: GolAccount
+    network: arc-testnet
+    source:
+      abi: GolAccount
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - Mandate
+        - Action
+      abis:
+        - name: GolAccount
+          file: ./abis/GolAccount.json
+      eventHandlers:
+        - event: MandateCreated(indexed uint256,indexed address,uint256,uint256,uint64,address[])
+          handler: handleMandateCreated
+        - event: MandateRevoked(indexed uint256,indexed address)
+          handler: handleMandateRevoked
+        - event: Executed(indexed uint256,indexed bytes32,indexed address,address,uint256,uint256,uint256,uint256)
+          handler: handleExecuted
+        - event: Refused(indexed uint256,indexed bytes32,indexed address,address,uint8,uint256,uint256,uint256,string,uint256)
+          handler: handleRefused
+      file: ./src/account.ts
