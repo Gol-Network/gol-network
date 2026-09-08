@@ -10,6 +10,19 @@ permissions:
 jobs:
   application:
     runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17.6-alpine
+        env:
+          POSTGRES_DB: gol_test
+          POSTGRES_PASSWORD: gol_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d gol_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -21,6 +34,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:gol_test_password@127.0.0.1:5432/gol_test
       - run: pnpm --filter @gol/web build
       - run: pnpm --filter @gol/subgraph codegen
       - run: pnpm --filter @gol/subgraph build
