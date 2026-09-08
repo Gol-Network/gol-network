@@ -1,0 +1,97 @@
+name: gol
+
+services:
+  postgres:
+    image: postgres:17.6-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gol
+      POSTGRES_USER: gol_admin
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [private]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gol_admin -d gol"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    image: postgres:17.6-alpine
+    environment:
+      PGPASSWORD: ${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD}
+      POSTGRES_RUNTIME_PASSWORD: ${POSTGRES_RUNTIME_PASSWORD:?set POSTGRES_RUNTIME_PASSWORD}
+    volumes:
+      - ../agent/src/db/schema.sql:/migrations/001.sql:ro
+      - ./migrate.sh:/migrations/migrate.sh:ro
+    networks: [private]
+    depends_on:
+      postgres: { condition: service_healthy }
+    command: ["sh", "/migrations/migrate.sh"]
+    restart: "no"
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: web
+    restart: unless-stopped
+    env_file:
+      - path: .env.production
+        required: false
+    environment:
+      DATABASE_URL: postgresql://gol_runtime:${POSTGRES_RUNTIME_PASSWORD}@postgres:5432/gol
+    networks: [public, private]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)})"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    security_opt: ["no-new-privileges:true"]
+
+  worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: worker
+    restart: unless-stopped
+    env_file:
+      - path: .env.production
+        required: false
+    environment:
+      DATABASE_URL: postgresql://gol_runtime:${POSTGRES_RUNTIME_PASSWORD}@postgres:5432/gol
+    networks: [private]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    stop_grace_period: 45s
+    security_opt: ["no-new-privileges:true"]
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [public]
+    depends_on:
+      web: { condition: service_healthy }
+
+networks:
+  public:
+  private:
+    internal: true
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:

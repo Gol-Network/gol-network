@@ -1,0 +1,15 @@
+.git
+.github
+**/.next
+**/dist
+**/node_modules
+**/test-results
+**/playwright-report
+contracts/cache
+contracts/out
+subgraph/build
+subgraph/generated
+.env
+.env.*
+.secrets
+*.log

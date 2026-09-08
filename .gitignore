@@ -9,6 +9,7 @@ dist/
 .next/
 playwright-report/
 test-results/
+*.tsbuildinfo
 contracts/cache/
 contracts/out/
 contracts/broadcast/
