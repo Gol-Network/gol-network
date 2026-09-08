@@ -1,0 +1,36 @@
+{
+  "name": "@gol/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "pnpm --filter @gol/protocol build && pnpm --filter @gol/agent build && next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@gol/agent": "workspace:*",
+    "@gol/protocol": "workspace:*",
+    "@privy-io/node": "0.34.0",
+    "@privy-io/react-auth": "3.40.0",
+    "next": "16.3.4",
+    "pg": "8.23.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "server-only": "0.0.1",
+    "viem": "2.56.3",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "24.3.1",
+    "@types/pg": "8.15.5",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "typescript": "7.0.2",
+    "vitest": "5.0.0"
+  }
+}

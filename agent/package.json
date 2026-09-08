@@ -6,6 +6,20 @@
   "bin": {
     "gol": "./src/cli.ts"
   },
+  "exports": {
+    "./db": {
+      "types": "./src/db/journal.ts",
+      "default": "./dist/db/journal.js"
+    },
+    "./query": {
+      "types": "./src/query/index.ts",
+      "default": "./dist/query/index.js"
+    },
+    "./model": {
+      "types": "./src/model/index.ts",
+      "default": "./dist/model/index.js"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
