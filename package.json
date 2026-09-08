@@ -11,6 +11,7 @@
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck",
     "lint": "pnpm -r --if-present lint",
+    "demo:acceptance": "pnpm --filter @gol/agent exec tsx ../scripts/demo.ts",
     "format:check": "prettier --check .",
     "format": "prettier --write ."
   },

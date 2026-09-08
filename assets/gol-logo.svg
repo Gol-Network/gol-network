@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">GOL logo</title>
+  <desc id="desc">A controlled green transaction path crossing a circular policy boundary.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#071522"/>
+      <stop offset="1" stop-color="#0c2530"/>
+    </linearGradient>
+    <linearGradient id="flow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#63b3ed"/>
+      <stop offset="1" stop-color="#31e6a1"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+  <circle cx="288" cy="256" r="132" fill="none" stroke="#8ba7b8" stroke-width="22"/>
+  <path d="M65 256h325" fill="none" stroke="#193545" stroke-width="62" stroke-linecap="round"/>
+  <path d="M65 256h325" fill="none" stroke="url(#flow)" stroke-width="20" stroke-linecap="round"/>
+  <circle cx="88" cy="256" r="28" fill="#63b3ed"/>
+  <circle cx="400" cy="256" r="34" fill="#31e6a1"/>
+  <path d="M279 192v128" stroke="#edf7f4" stroke-width="18" stroke-linecap="round"/>
+</svg>

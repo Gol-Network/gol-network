@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">GOL production architecture</title>
+  <desc id="desc">Owner wallet, web service, payment worker, Privy signer, Arc contracts, PostgreSQL, The Graph, and grounded answers.</desc>
+  <defs>
+    <linearGradient id="backdrop" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#06121d"/>
+      <stop offset="1" stop-color="#0d2630"/>
+    </linearGradient>
+    <filter id="shadow"><feDropShadow dx="0" dy="10" stdDeviation="14" flood-opacity="0.28"/></filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0l10 5-10 5z" fill="#74dcb2"/>
+    </marker>
+    <style>
+      .box { fill: #102d39; stroke: #315766; stroke-width: 2; rx: 22; filter: url(#shadow); }
+      .trust { fill: #0b222c; stroke: #4e7887; stroke-width: 2; rx: 30; stroke-dasharray: 9 8; }
+      .title { fill: #f2f7f5; font: 700 28px system-ui, sans-serif; }
+      .label { fill: #f2f7f5; font: 650 21px system-ui, sans-serif; }
+      .small { fill: #abc1ca; font: 16px system-ui, sans-serif; }
+      .accent { fill: #31e6a1; font: 700 17px system-ui, sans-serif; }
+      .line { fill: none; stroke: #74dcb2; stroke-width: 4; marker-end: url(#arrow); }
+      .read { fill: none; stroke: #69aee8; stroke-width: 4; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect width="1600" height="900" fill="url(#backdrop)"/>
+  <text x="80" y="74" class="title">GOL: policy-bound agent payments on Arc testnet</text>
+  <text x="80" y="108" class="small">Owner authority, scoped signing, durable execution, on-chain policy, indexed evidence</text>
+
+  <rect x="60" y="170" width="300" height="190" class="box"/>
+  <text x="95" y="218" class="accent">OWNER CONTROL</text>
+  <text x="95" y="260" class="label">Privy owner wallet</text>
+  <text x="95" y="294" class="small">Create and fund account</text>
+  <text x="95" y="322" class="small">Sign mandate, revoke, withdraw</text>
+
+  <rect x="440" y="145" width="470" height="590" class="trust"/>
+  <text x="475" y="188" class="accent">GOL PRODUCTION HOST</text>
+  <rect x="485" y="225" width="380" height="130" class="box"/>
+  <text x="520" y="270" class="label">Next.js web and API</text>
+  <text x="520" y="305" class="small">Privy session, owner scope, status</text>
+  <text x="520" y="330" class="small">No owner signing credential</text>
+  <rect x="485" y="405" width="380" height="130" class="box"/>
+  <text x="520" y="450" class="label">Persistent payment worker</text>
+  <text x="520" y="485" class="small">Strict parser, leases, reconciliation</text>
+  <text x="520" y="510" class="small">One submission per instruction</text>
+  <rect x="485" y="585" width="380" height="105" class="box"/>
+  <text x="520" y="630" class="label">Private PostgreSQL</text>
+  <text x="520" y="662" class="small">Journal and account associations</text>
+
+  <rect x="1000" y="145" width="540" height="590" class="trust"/>
+  <text x="1035" y="188" class="accent">EXTERNAL CONTROL AND EVIDENCE</text>
+  <rect x="1045" y="225" width="450" height="120" class="box"/>
+  <text x="1080" y="270" class="label">Privy agent wallet</text>
+  <text x="1080" y="304" class="small">Backend additional signer, chain/to/value policy</text>
+  <rect x="1045" y="395" width="450" height="135" class="box"/>
+  <text x="1080" y="440" class="label">Arc contracts and official USDC</text>
+  <text x="1080" y="474" class="small">Immutable owner and one active mandate</text>
+  <text x="1080" y="502" class="small">Executed or persisted Refused outcome</text>
+  <rect x="1045" y="580" width="450" height="110" class="box"/>
+  <text x="1080" y="625" class="label">The Graph provider</text>
+  <text x="1080" y="658" class="small">Event history, freshness, transaction citations</text>
+
+  <path d="M360 265H485" class="line"/>
+  <text x="378" y="244" class="small">session</text>
+  <path d="M360 320C770 810 1070 545 1070 495" class="line"/>
+  <text x="790" y="780" class="small">direct owner transactions</text>
+  <path d="M675 355V405" class="line"/>
+  <text x="690" y="387" class="small">queued request</text>
+  <path d="M675 535V585" class="line"/>
+  <path d="M865 470H1045V285" class="line"/>
+  <text x="906" y="447" class="small">scoped signing</text>
+  <path d="M1270 345V395" class="line"/>
+  <text x="1287" y="376" class="small">pay call</text>
+  <path d="M1270 530V580" class="read"/>
+  <text x="1287" y="565" class="small">events</text>
+  <path d="M1045 635C925 635 930 300 865 300" class="read"/>
+  <text x="902" y="602" class="small">grounded activity and answers</text>
+
+  <rect x="60" y="795" width="1480" height="52" rx="18" fill="#102d39" stroke="#315766"/>
+  <text x="95" y="829" class="small">Authority boundary: the model proposes recipient and amount. Privy limits signing scope. GolAccount alone decides and records policy outcomes.</text>
+</svg>
