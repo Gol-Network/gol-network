@@ -7,7 +7,6 @@ packages:
 patchedDependencies:
   '@graphprotocol/graph-ts@0.33.0': patches/@graphprotocol__graph-ts@0.33.0.patch
 
-onlyBuiltDependencies:
-  - '@graphprotocol/graph-cli'
-  - esbuild
-  - sharp
+allowBuilds:
+  esbuild: true
+  sharp: true

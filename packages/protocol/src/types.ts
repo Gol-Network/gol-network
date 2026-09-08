@@ -43,6 +43,7 @@ export const recipientLabelSchema = z.object({
 });
 
 export type Hex32 = `0x${string}`;
+export type Hex = `0x${string}`;
 export type Address = `0x${string}`;
 export type RequestState = z.infer<typeof requestStateSchema>;
 export type PaymentIntent = z.infer<typeof paymentIntentSchema>;
@@ -75,7 +76,7 @@ export interface ActivityFilter {
 }
 
 export interface ActivityRecord {
-  actionId: Hex32;
+  actionId: Hex;
   requestId: Hex32;
   mandateId: string;
   agent: Address;
@@ -109,7 +110,7 @@ export interface ActivityPage {
 }
 
 export interface Citation {
-  actionId: Hex32;
+  actionId: Hex;
   txHash: Hex32;
   logIndex: string;
   explorerUrl: string;
