@@ -183,6 +183,13 @@ export function parseEnvironment(
     'AWS_KMS_SIGNER_ADDRESS',
     kmsDemand('AWS_KMS_SIGNER_ADDRESS'),
   );
+  // The operator funds the shared agent gas reserve by default under aws_kms. Owner-funded gas can
+  // be forced back on with AGENT_GAS_MANAGED=false.
+  const agentGasManagedRaw = value('AGENT_GAS_MANAGED');
+  const agentGasManaged =
+    agentGasManagedRaw === null
+      ? isKms
+      : agentGasManagedRaw !== 'false' && agentGasManagedRaw !== '0';
 
   const factoryAddress = address(
     'FACTORY_ADDRESS',
@@ -216,6 +223,7 @@ export function parseEnvironment(
         faucetUrl,
         agentSignerProvider,
         agentSignerAddress: isKms ? awsKmsSignerAddress : null,
+        agentGasManaged,
         recipientLabel: value('GOL_RECIPIENT_LABEL') ?? 'Design contractor',
         accountTargetUnits: usdcUnits(
           'GOL_ACCOUNT_TARGET_USDC',

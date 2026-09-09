@@ -14,7 +14,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import type { PublicConfig } from '@/config';
 import { createFixtureBackend } from '@/client/fixture-backend';
 import { createLiveBackend } from '@/client/live-backend';
-import { isTerminalStage, stageFromJournal } from '@/client/stages';
+import { errorCodeCopy, isTerminalStage, stageFromJournal } from '@/client/stages';
 import { INDEXING_BACKOFF_MS, isIndexed, type PendingActivity } from '@/client/timeline';
 import type {
   AccountSnapshot,
@@ -295,7 +295,7 @@ function GolExperience({
           rule: snapshot.rule,
           attemptedUnits: snapshot.attemptedUnits,
           headroomUnits: snapshot.headroomUnits,
-          detail: snapshot.errorCode ?? '',
+          detail: errorCodeCopy(snapshot.errorCode),
           warning: null,
         });
         if (isTerminalStage(stage)) {

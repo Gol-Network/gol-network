@@ -31,8 +31,10 @@ export function deriveSteps(input: {
     Boolean(balances) && BigInt(balances!.ownerGasWei) >= BigInt(config.minOwnerGasWei);
   const accountReady = Boolean(account?.accountAddress);
   const agentReady = Boolean(account?.agentAddress);
+  // When the operator funds the shared agent gas reserve, the owner is never shown this step.
   const agentGasReady =
-    Boolean(balances) && BigInt(balances!.agentGasWei) >= BigInt(config.minAgentGasWei);
+    config.agentGasManaged ||
+    (Boolean(balances) && BigInt(balances!.agentGasWei) >= BigInt(config.minAgentGasWei));
   const mandateReady =
     Boolean(account) && account!.activeMandateId !== '0' && account!.mandate?.revoked === false;
 
@@ -97,16 +99,20 @@ export function deriveSteps(input: {
           action: 'provision_agent',
           actionLabel: 'Review and provision agent wallet',
         },
-    {
-      id: 'agent_gas',
-      title: 'Agent gas reserve funded and confirmed',
-      detail: agentGasReady
-        ? 'The agent wallet can pay gas for its own transactions.'
-        : 'Top up the agent gas reserve. This transfer sits outside the mandate budget.',
-      complete: agentGasReady,
-      action: 'fund_agent_gas',
-      actionLabel: 'Top up agent gas',
-    },
+    ...(config.agentGasManaged
+      ? []
+      : [
+          {
+            id: 'agent_gas' as StepId,
+            title: 'Agent gas reserve funded and confirmed',
+            detail: agentGasReady
+              ? 'The agent wallet can pay gas for its own transactions.'
+              : 'Top up the agent gas reserve. This transfer sits outside the mandate budget.',
+            complete: agentGasReady,
+            action: 'fund_agent_gas' as OwnerActionKind,
+            actionLabel: 'Top up agent gas',
+          },
+        ]),
     {
       id: 'mandate',
       title: 'Mandate reviewed, signed, and confirmed',

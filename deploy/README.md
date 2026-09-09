@@ -34,6 +34,10 @@ Browser configuration is read on the server when the container starts, not when 
 
 The worker re-derives the address from the key on startup and refuses to run if it does not match `AWS_KMS_SIGNER_ADDRESS` and every `signer_provider='aws_kms'` account link. The web `/api/health` reports `components.signer` (provider and configuration presence) without any KMS call.
 
+### Operator-funded agent gas
+
+With one shared agent address, `AGENT_GAS_MANAGED` defaults to `true`: the owner-funded "top up agent gas" step is removed from the UI and the operator keeps the shared agent EOA funded for native Arc gas. This does not change any trust boundary; gas is only fuel for the agent EOA, which can spend its own gas and call `GolAccount.pay` under an active, envelope-validated mandate, and nothing else. The application's liveness now depends on the operator: an empty reserve makes every payment fail with `signer_blocked` / `AGENT_GAS_INSUFFICIENT` until it is topped up. Keep the reserve small (a compromised worker could waste it), monitor the agent address balance with an alarm, and leave `AGENT_GAS_LOW_WATERMARK` as the pre-sign guard. Set `AGENT_GAS_MANAGED=false` to restore the owner-funded gas step.
+
 ### Rotation and rollback
 
 - A signer migration requires a new owner-signed mandate for the new agent address, never a contract redeployment. Switching `AGENT_SIGNER_PROVIDER` back to `privy` does not reactivate an old mandate.

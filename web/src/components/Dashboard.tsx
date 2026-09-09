@@ -564,14 +564,15 @@ function AccountAndMandateControls(props: {
   const ownerGas = step('owner_gas');
   const accountStep = step('account');
   const agentStep = step('agent_wallet');
-  const agentGas = step('agent_gas');
+  // Absent when the operator funds the shared agent gas reserve.
+  const agentGas = props.steps.find((entry) => entry.id === 'agent_gas') ?? null;
   const mandateStep = step('mandate');
   const mandate = props.account?.mandate ?? null;
   const prerequisitesReady =
     ownerGas.status === 'complete' &&
     accountStep.status === 'complete' &&
     agentStep.status === 'complete' &&
-    agentGas.status === 'complete';
+    (!agentGas || agentGas.status === 'complete');
 
   return (
     <div className="account-controls">
@@ -677,7 +678,7 @@ function AccountAndMandateControls(props: {
         </div>
       )}
 
-      {agentStep.status === 'complete' && agentGas.status !== 'complete' && (
+      {agentGas && agentStep.status === 'complete' && agentGas.status !== 'complete' && (
         <div className="control-callout" data-step="agent_gas">
           <div>
             <strong>Agent gas reserve required</strong>
@@ -1149,8 +1150,9 @@ function Balances({ config, account }: { config: PublicConfig; account: AccountS
         <span>Agent gas reserve</span>
         <strong>{balances ? `${formatNativeGas(BigInt(balances.agentGasWei))} USDC` : '—'}</strong>
         <small>
-          Top-ups of {formatUsdc(BigInt(config.agentGasTopUpUnits))} USDC sit outside the mandate
-          budget.
+          {config.agentGasManaged
+            ? 'Funded by the GOL operator. Never drawn from your account balance or mandate.'
+            : `Top-ups of ${formatUsdc(BigInt(config.agentGasTopUpUnits))} USDC sit outside the mandate budget.`}
         </small>
       </div>
     </div>

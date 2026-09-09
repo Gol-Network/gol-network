@@ -15,6 +15,12 @@ export interface PublicConfig {
   agentSignerProvider: 'privy' | 'aws_kms';
   /** The shared AWS KMS agent address, when `agentSignerProvider` is `aws_kms`. Public, non-secret. */
   agentSignerAddress: Address | null;
+  /**
+   * When true, the GOL operator funds the agent's gas reserve and the owner is never asked to top
+   * it up. Defaults to true for `aws_kms` (one shared agent address), overridable with
+   * `AGENT_GAS_MANAGED`.
+   */
+  agentGasManaged: boolean;
   chainId: number;
   chainName: string;
   rpcUrl: string;

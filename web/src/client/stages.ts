@@ -89,6 +89,25 @@ export function isTerminalStage(stage: PaymentStage): boolean {
   return PAYMENT_STAGES[stage].terminal;
 }
 
+const ERROR_CODE_COPY: Record<string, string> = {
+  AGENT_GAS_INSUFFICIENT:
+    'The shared agent gas reserve is being topped up by the operator. Nothing was submitted; retry shortly.',
+  SIGNER_ENVELOPE_REJECTED:
+    'The signer blocked this request before submission because a transaction field did not match the mandate. Nothing was submitted.',
+  MANDATE_NOT_ACTIVE: 'This mandate is no longer the active one on the account.',
+  MANDATE_AGENT_MISMATCH:
+    'The active mandate does not name the current agent signer. Sign a new mandate.',
+  BROADCAST_AMBIGUOUS:
+    'The network response was unresolved. This is not a failure; refresh to reconcile.',
+  RECONCILIATION_PENDING: 'Waiting on the receipt that decides the outcome. Refresh to reconcile.',
+};
+
+/** Maps a journal error code to owner-facing copy, falling back to the raw code. */
+export function errorCodeCopy(code: string | null | undefined): string {
+  if (!code) return '';
+  return ERROR_CODE_COPY[code] ?? code;
+}
+
 export const TRANSACTION_PHASES: Record<TransactionPhase, string> = {
   idle: 'Ready',
   awaiting_signature: 'Awaiting your wallet signature',
