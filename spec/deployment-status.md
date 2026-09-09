@@ -4,15 +4,70 @@ Last reviewed: 9 September 2026
 
 ## Current state
 
-Local implementation and deployment tooling are complete. `GolAccountFactory` is deployed and
-source-verified on Arc testnet, and the public deployment manifest records its receipt and
-reproducibility evidence. Production hosting is the existing Tokyo EC2 instance `gol-production`,
-with public HTTPS at `https://gol.network`. A demonstration `GolAccount` has not yet been created,
-and live provider acceptance has not been performed. The application remains in labeled fixture
-mode until real Privy, Graph, and OpenAI configuration is supplied.
+`gol.network` runs the KMS-backed agent signer. The application is live (not fixture mode) at
+`https://gol.network` on the Tokyo EC2 instance `gol-production`, serving source commit
+`68c1521efdb3c2984474719d59d9eebf484c2bcf`. `/api/health` reports
+`signer.provider = aws_kms`, `signer.ready = true`, and `ready = true`. The payment worker derives
+the agent address from the production KMS key on startup and refuses to run on any mismatch. The web
+container carries no AWS SDK and no AWS credentials.
+
+Still pending: the mandatory real-user browser acceptance on `gol.network` (spec section 10.3). No
+owner-signed mandate for the KMS agent exists yet, so no allowed or refused payment has executed
+under the new signer in production. Until that passes, do not state that users can send funds under
+an owner-signed mandate on `gol.network`.
 
 This file is the operational source of truth for the remaining release work. Check an item only when
 the named evidence exists; configuration presence or fixture output is not acceptance.
+
+## KMS-backed agent signer cutover (9 September 2026)
+
+Implements [KMS-backed agent signer specification](kms-backed-agent-signer-spec.md).
+
+- [x] Provider-neutral signer, AWS KMS implementation, mandatory pre-sign envelope validator, and
+      the persist-before-broadcast worker state machine are implemented with unit and crash-window
+      tests. `pnpm --filter @gol/agent test` 69 passed / 3 skipped (Postgres integration skipped);
+      `pnpm --filter @gol/web test` 18 passed; both typecheck and build; `forge test` 20 passed;
+      `pnpm format:check` and `git diff --check` clean. Node 22.22.0, pnpm 11.17.0.
+- [x] Production KMS signing key created: `alias/gol-agent-signer-production`,
+      `arn:aws:kms:ap-northeast-1:779035457064:key/54cbfcbc-eaae-4ac8-9c76-41477ec38567`,
+      `ECC_SECG_P256K1` / `SIGN_VERIFY` / `ECDSA_SHA_256`, CUSTOMER managed, tagged
+      (project, environment, owner, purpose, created).
+- [x] Derived agent address `0x17A1DEfca6BA7BD1f14d6585eD34c14f69ab08eE`, confirmed byte-for-byte by
+      three independent implementations (agent SPKI parser + viem, `viem/accounts` publicKeyToAddress,
+      Foundry `cast keccak`).
+- [x] Worker IAM: customer-managed policy `GOLAgentSignerKMS` grants only `kms:GetPublicKey` and
+      `kms:Sign` (conditioned `kms:SigningAlgorithm = ECDSA_SHA_256`) on the exact key ARN, with an
+      explicit Deny on `DisableKey`, `ScheduleKeyDeletion`, `PutKeyPolicy`, `CreateGrant`, and alias
+      management. Attached to `GOLProductionEC2Role`. Verified from the instance role:
+      `kms:GetPublicKey` and `kms:Sign` (ECDSA_SHA_256) succeed; `ECDSA_SHA_384` and
+      `kms:ScheduleKeyDeletion` return `AccessDenied`.
+- [x] Web credential boundary: `AWS_EC2_METADATA_DISABLED=true` on the `web` service and the web
+      image contains no `@aws-sdk` (`ERR_MODULE_NOT_FOUND`). The worker holds no static AWS keys and
+      uses the instance role over IMDS (hop limit 2, IMDSv2 required).
+- [x] CloudTrail: multi-region trail `gol-audit`, log-file validation, S3
+      `gol-cloudtrail-779035457064` (public access blocked, versioned, 400-day lifecycle) and
+      CloudWatch Logs `/gol/cloudtrail` (400-day retention). Metric-filter alarms
+      `gol-kms-key-lifecycle` and `gol-kms-sign-volume-high` publish to SNS `gol-security-alerts`
+      (email subscription pending confirmation). `GetPublicKey` and `Sign` by the worker are
+      recorded.
+- [x] Verified Postgres backup taken before cutover:
+      `s3://gol-production-779035457064-ap-northeast-1/postgres/20260909T143142Z-pre-kms-cutover.sql.gz`.
+- [x] Additive schema migration applied on production (idempotent `ALTER TABLE`; `signing_prepared`
+      and `signed` states; `account_links` signer_* columns; nullable Privy identifiers).
+- [x] `deploy/deploy.sh` re-run at `RELEASE_COMMIT=68c1521…`; web and worker images rebuilt on
+      Node 22 ARM64; migration applied; `/api/health` returned 200 with `signer.ready = true`.
+- [x] The single existing `account_links` row (owner `0x6B745CFFD0018d910FA1C00911ebc2fd19933f55`,
+      account `0xD7425769803302430B343fAa410c34A3DF9908Af`) was migrated from `privy` to `aws_kms`
+      with the derived KMS address; historical `agent_wallet_id` / `policy_id` retained. Its three
+      prior requests are terminal `unknown` (`SUBMISSION_AMBIGUOUS`, no `tx_hash`) and are not
+      re-claimed.
+- [x] Worker end-to-end `kms:Sign` over a DIGEST returned an `ECDSA_SHA_256` DER signature.
+- [ ] Owner tops up the KMS agent gas reserve on `gol.network`.
+- [ ] Owner reviews and signs a fresh mandate naming `0x17A1DEfca6BA7BD1f14d6585eD34c14f69ab08eE`.
+- [ ] `pnpm demo:acceptance` (or the browser flow) executes one allowed 40 USDC payment and one
+      refused 70 USDC payment under the KMS signer, with Graph and grounded-answer evidence.
+- [ ] Real-user browser acceptance on `gol.network` per spec section 10.3, evidence saved.
+- [ ] Confirm the SNS `gol-security-alerts` email subscription.
 
 ## 1. Release source
 
