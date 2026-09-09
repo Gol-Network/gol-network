@@ -35,6 +35,8 @@ export interface KmsExecutionConfig {
   maxPriorityFeePerGas: bigint;
   /** Multiplier applied to the bounded gas estimate, e.g. 1.25. */
   gasMargin: number;
+  /** Native-unit balance below which the worker refuses to sign, keeping the agent reserve small. */
+  gasLowWatermark: bigint;
 }
 
 interface WorkerContextBase {
@@ -247,7 +249,7 @@ export class PaymentWorker {
     if (gas > deps.kms.maxGas) gas = deps.kms.maxGas;
 
     const balance = await deps.chain.nativeBalance(signerAddress);
-    if (balance < gas * maxFeePerGas) {
+    if (balance < deps.kms.gasLowWatermark || balance < gas * maxFeePerGas) {
       await this.journal.finish(job.id, this.workerId, {
         state: 'signer_blocked',
         errorCode: 'AGENT_GAS_INSUFFICIENT',

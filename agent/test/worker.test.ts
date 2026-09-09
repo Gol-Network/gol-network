@@ -250,6 +250,7 @@ const KMS_CONFIG: KmsExecutionConfig = {
   maxFeePerGas: 20_000_000_000n,
   maxPriorityFeePerGas: 3_000_000_000n,
   gasMargin: 1.25,
+  gasLowWatermark: 200_000_000_000_000n,
 };
 
 function privyContext(signer: FakeSigner, chain: PaymentChain = new FakeChain()): WorkerContext {
@@ -435,6 +436,21 @@ describe('payment worker (aws_kms) persist-before-broadcast', () => {
     expect(journal.finishes.at(-1)).toMatchObject({
       state: 'signer_blocked',
       errorCode: 'MANDATE_NOT_ACTIVE',
+    });
+  });
+
+  it('refuses before signing when the agent gas reserve is below the low watermark', async () => {
+    const journal = new FakeJournal(job());
+    const signer = new FakeKmsSigner();
+    const chain = new FakeChain();
+    chain.nativeBalance = async () => 1_000n; // far below gasLowWatermark
+    await new PaymentWorker('worker-1', journal, {
+      resolve: async () => kmsContext(signer, chain),
+    }).tick();
+    expect(signer.signTransaction).not.toHaveBeenCalled();
+    expect(journal.finishes.at(-1)).toMatchObject({
+      state: 'signer_blocked',
+      errorCode: 'AGENT_GAS_INSUFFICIENT',
     });
   });
 

@@ -70,6 +70,7 @@ if (provider === 'aws_kms') {
       process.env.AGENT_MAX_PRIORITY_FEE_PER_GAS ?? process.env.AGENT_MAX_FEE_PER_GAS!,
     ),
     gasMargin: Number(process.env.AGENT_GAS_MARGIN ?? '1.25'),
+    gasLowWatermark: BigInt(process.env.AGENT_GAS_LOW_WATERMARK ?? '0'),
   };
 
   // Fail closed on startup: the derived address must match configuration and every linked row.
