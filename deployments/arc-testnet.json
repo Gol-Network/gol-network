@@ -1,20 +1,20 @@
 {
-  "status": "not_deployed",
+  "status": "deployed",
   "chainId": 5042002,
   "network": "arc-testnet",
   "usdc": "0x3600000000000000000000000000000000000000",
-  "factory": null,
+  "factory": "0x0C057bE9Ea60Ee0dc9b617600Eb6a688fC9Cf789",
   "account": null,
-  "deploymentBlock": null,
-  "deploymentTransaction": null,
+  "deploymentBlock": 61179889,
+  "deploymentTransaction": "0xf6504c625ed208cd7bc2ea244c3eaab8bf651485d75b7db7d6ed9e1dc7641685",
   "compiler": "0.8.26",
   "optimizer": {
     "enabled": true,
     "runs": 200
   },
   "evmVersion": "paris",
-  "sourceCommit": null,
-  "bytecodeHash": null,
-  "abiHash": null,
-  "verificationUrl": null
+  "sourceCommit": "f1f9e7b4586b834325ab834a0e8fe137c9a4c649",
+  "bytecodeHash": "0x82c5376287521aa611e7f583a23cc8f85e891600534d33b9e4c51d78ab21b46d",
+  "abiHash": "0x34996f274c68002fde4c9a782b02747006b25e05898efc4a50f2311af8ba45f6",
+  "verificationUrl": "https://testnet.arcscan.app/address/0x0C057bE9Ea60Ee0dc9b617600Eb6a688fC9Cf789"
 }

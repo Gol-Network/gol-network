@@ -4,9 +4,11 @@ Last reviewed: 9 September 2026
 
 ## Current state
 
-Local implementation and deployment tooling are complete. GOL has not been deployed or accepted
-against live providers. The Arc deployment manifest remains `not_deployed`, and the application runs
-in labeled fixture mode until real Privy and factory configuration is supplied.
+Local implementation and deployment tooling are complete. `GolAccountFactory` is deployed and
+source-verified on Arc testnet, and the public deployment manifest records its receipt and
+reproducibility evidence. A demonstration `GolAccount` has not yet been created, and live provider
+acceptance has not been performed. The application remains in labeled fixture mode until real Privy,
+factory, account, and supporting provider configuration is supplied.
 
 This file is the operational source of truth for the remaining release work. Check an item only when
 the named evidence exists; configuration presence or fixture output is not acceptance.
@@ -49,22 +51,28 @@ Evidence:
 
 ## 3. Arc contract deployment
 
-- [ ] Load the Foundry keystore account `gol-deployer`
+- [x] Load the Foundry keystore account `gol-deployer`
       (`0xD2DA4968B09401DB75517EF9AcF6A30CdC7dF26F`) without exposing its password or key.
-- [ ] Confirm Arc testnet chain ID `5042002`, official USDC, deployer balance, and compiler settings.
-- [ ] Deploy `GolAccountFactory` with `contracts/script/Deploy.s.sol`.
-- [ ] Verify the contract source on the configured Arc explorer.
-- [ ] Update `deployments/arc-testnet.json` with the factory address, deployment block and
+- [x] Confirm Arc testnet chain ID `5042002`, official USDC, deployer balance, and compiler settings.
+- [x] Deploy `GolAccountFactory` with `contracts/script/Deploy.s.sol`.
+- [x] Verify the contract source on the configured Arc explorer.
+- [x] Update `deployments/arc-testnet.json` with the factory address, deployment block and
       transaction, source commit, bytecode and ABI hashes, and verification URL.
 - [ ] Create the demonstration account through the verified factory and record its address.
 
 Evidence:
 
-- Factory address:
-- Account address:
+- Factory address: `0x0C057bE9Ea60Ee0dc9b617600Eb6a688fC9Cf789`
+- Account address: pending creation by the actual owner wallet
 - Deployment transaction and block:
+  `0xf6504c625ed208cd7bc2ea244c3eaab8bf651485d75b7db7d6ed9e1dc7641685`, block
+  `61179889`
 - Verification URL:
-- Bytecode and ABI hashes:
+  https://testnet.arcscan.app/address/0x0C057bE9Ea60Ee0dc9b617600Eb6a688fC9Cf789
+- Source commit: `f1f9e7b4586b834325ab834a0e8fe137c9a4c649`
+- Bytecode hash: `0x82c5376287521aa611e7f583a23cc8f85e891600534d33b9e4c51d78ab21b46d`
+- ABI hash: `0x34996f274c68002fde4c9a782b02747006b25e05898efc4a50f2311af8ba45f6`
+- Contract validation: 20 Foundry tests passed; `forge fmt --check` passed
 
 ## 4. Subgraph deployment
 
