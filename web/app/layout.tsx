@@ -12,6 +12,10 @@ export const dynamic = 'force-dynamic';
 export const metadata: Metadata = {
   title: 'GOL | Controlled agent payments',
   description: 'Owner-controlled USDC agent payments on Arc testnet',
+  other: {
+    // Base Build domain-ownership verification for https://gol.network/
+    'base:app_id': '6aa1a55014c95246af9c958f',
+  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
