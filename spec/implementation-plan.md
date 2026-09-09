@@ -1,6 +1,6 @@
 # GOL ETHOnline Implementation Plan
 
-> **For agentic workers:** Use `superpowers:executing-plans` to implement this plan task-by-task after specification approval. Steps use checkboxes. Work inline unless Anderson explicitly requests delegation. This plan does not authorize application implementation yet.
+> **For agentic workers:** Use `retired workflow` to implement this plan task-by-task after specification approval. Steps use checkboxes. Work inline unless Anderson explicitly requests delegation. This plan does not authorize application implementation yet.
 
 **Goal:** Deliver a live Arc testnet account where an agent's 40 USDC payment succeeds, its subsequent 70 USDC request is refused against 60 remaining, and The Graph supports a cited natural-language explanation.
 

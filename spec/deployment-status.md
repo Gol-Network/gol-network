@@ -6,9 +6,10 @@ Last reviewed: 9 September 2026
 
 Local implementation and deployment tooling are complete. `GolAccountFactory` is deployed and
 source-verified on Arc testnet, and the public deployment manifest records its receipt and
-reproducibility evidence. A demonstration `GolAccount` has not yet been created, and live provider
-acceptance has not been performed. The application remains in labeled fixture mode until real Privy,
-factory, account, and supporting provider configuration is supplied.
+reproducibility evidence. Production hosting is the existing Tokyo EC2 instance `gol-production`,
+with public HTTPS at `https://gol.network`. A demonstration `GolAccount` has not yet been created,
+and live provider acceptance has not been performed. The application remains in labeled fixture
+mode until real Privy, Graph, and OpenAI configuration is supplied.
 
 This file is the operational source of truth for the remaining release work. Check an item only when
 the named evidence exists; configuration presence or fixture output is not acceptance.
@@ -30,24 +31,36 @@ Evidence:
 
 ## 2. Provider and infrastructure provisioning
 
-- [ ] Create or confirm the dedicated Privy application, allowed origin, app secret, verification
+- [x] Create or confirm the dedicated Privy application, allowed origin, app secret, verification
       key, and authorization key/quorum.
-- [ ] Confirm the authorization key ID matches the configured private authorization key.
-- [ ] Obtain and verify access to the configured OpenAI model.
-- [ ] Create the Graph Studio subgraph, deploy key, query API key, and endpoint.
-- [ ] Confirm the production host, region, architecture, capacity, encrypted storage, and SSM or
+- [x] Confirm the authorization key ID matches the configured private authorization key.
+- [x] Obtain and verify access to the configured OpenAI model.
+- [x] Create the Graph Studio subgraph, deploy key, query API key, and endpoint.
+- [x] Confirm the production host, region, architecture, capacity, encrypted storage, and SSM or
       restricted SSH access. Create or explicitly approve a replacement if `gol-production` does
       not exist.
-- [ ] Configure DNS, TLS, the private backup bucket, KMS key, IAM role, and retention policy.
+- [x] Configure DNS, TLS, the private backup bucket, KMS key, IAM role, and retention policy.
 - [ ] Populate `deploy/.env.production` on the host with mode `0600`; never commit it.
 
 Evidence:
 
-- Privy app and policy IDs:
-- Graph Studio subgraph:
-- Production host and region:
-- Public domain:
-- Backup bucket and KMS reference:
+- Privy app and policy IDs: app `cmttquzfy02qb09l5gd9u6txw` (`Gol`); authorization
+  quorum `yeb2ndtfydr87r4687k4ypyv` (`GOL worker signer`, threshold 1). Allowed
+  origins `https://gol.network` and `http://127.0.0.1:3000`. Policy ID is created
+  per owner during agent provisioning, not at app setup.
+- Graph Studio subgraph: slug `gol`, Studio account `1758918`, network Arc testnet.
+  Studio status still `DRAFT` (not published to the decentralised network). Query API
+  key `gol-production` created and stored as `GRAPH_API_KEY`. Dev query endpoint live
+  after deploying version `0.0.1`:
+  `https://api.studio.thegraph.com/query/1758918/gol/0.0.1`. Deploy key and query API
+  key are distinct 32-hex values; deploy key held only in `../.secrets/gol-graph.env`.
+- Production host and region: `i-0551fb8ae101f65d0`, `ap-northeast-1` / `ap-northeast-1d`, `t4g.medium` ARM64,
+  Amazon Linux 2023, 30 GB encrypted gp3, Elastic IP `16.76.174.242`, SSH alias
+  `gol-production`, SSM Online
+- Public domain: `gol.network` (Cloudflare DNS-only A record to the Elastic IP; Caddy
+  Let's Encrypt certificate for `https://gol.network`)
+- Backup bucket and KMS reference: `gol-production-779035457064-ap-northeast-1` /
+  `alias/gol-backups`
 
 ## 3. Arc contract deployment
 
@@ -76,17 +89,28 @@ Evidence:
 
 ## 4. Subgraph deployment
 
-- [ ] Run `pnpm subgraph:prepare` from the completed Arc deployment manifest.
-- [ ] Review the generated network, factory address, and start block.
-- [ ] Run subgraph code generation, tests, and build.
-- [ ] Deploy the subgraph through Graph Studio and record its deployment ID and query endpoint.
-- [ ] Confirm `_meta` health and that indexing reaches the factory deployment block.
+- [x] Run `pnpm subgraph:prepare` from the completed Arc deployment manifest.
+- [x] Review the generated network, factory address, and start block.
+- [x] Run subgraph code generation, tests, and build.
+- [x] Deploy the subgraph through Graph Studio and record its deployment ID and query endpoint.
+- [x] Confirm `_meta` health and that indexing reaches the factory deployment block.
 
 Evidence:
 
-- Deployment ID:
+- Prepared manifest: network `arc-testnet`, factory
+  `0x0C057bE9Ea60Ee0dc9b617600Eb6a688fC9Cf789`, `startBlock: 61179889` (matches
+  `deployments/arc-testnet.json` deployment block).
+- Build/test: `graph codegen` and `graph build` clean on `@graphprotocol/graph-cli`
+  0.98.1 / Node 22; `graph test` 3/3 matchstick assertions pass.
+- Deployment ID (IPFS manifest CID): `QmYuyvng3hazXSfj3MWnFi2arm6RCJu4FD2nstF52xSYT9`,
+  version label `0.0.1`.
 - Query endpoint, without API key:
-- Initial indexed block:
+  `https://api.studio.thegraph.com/query/1758918/gol/0.0.1`
+- `_meta` health: `hasIndexingErrors: false`; deployment hash matches the CID above;
+  indexed head past block `61202900`, i.e. synced beyond the factory deployment block
+  `61179889`.
+- Initial indexed block: `61179889` (subgraph start block; no `Account`/`Mandate`/
+  `Action` entities yet — the demonstration `GolAccount` has not been created).
 
 ## 5. Application deployment
 

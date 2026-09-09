@@ -1,6 +1,9 @@
 # GOL production operations
 
-The selected target is the existing EC2 instance named `gol-production`. Discovery on 8 September 2026 did not find that instance in the enabled AWS regions, so these commands prepare the release but do not create, replace, or deploy to a VM.
+The selected target is the existing EC2 instance named `gol-production`
+(`i-0551fb8ae101f65d0` in `ap-northeast-1`, Elastic IP `16.76.174.242`). Public HTTPS is
+`https://gol.network`. These commands activate a release on that host; they do not create or
+replace the VM.
 
 ## Host prerequisites
 
