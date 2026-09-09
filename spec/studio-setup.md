@@ -38,7 +38,7 @@ pnpm exec graph build
 pnpm exec graph deploy "$GRAPH_SUBGRAPH_SLUG" --version-label 0.0.1 --deploy-key "$GRAPH_DEPLOY_KEY"
 ```
 
-Initialization uses the actual factory address, generated ABI, deployment start block and `arc-testnet`. Run scaffolding in an isolated temporary directory if the initialization command would nest or overwrite an existing package, then incorporate only reviewed generated files. The scaffold is only a starting point; our factory templates and precise event schema must be implemented and tested.
+Initialization uses the actual factory address, generated ABI, deployment start block and `arc-testnet`. Once the deployment is recorded in `deployments/arc-testnet.json`, run `pnpm subgraph:prepare` to write the factory address and start block into `subgraph/subgraph.yaml`; it refuses an undeployed record rather than shipping the placeholder address, and it never reads or writes a deploy or query key. Run scaffolding in an isolated temporary directory if the initialization command would nest or overwrite an existing package, then incorporate only reviewed generated files. The scaffold is only a starting point; our factory templates and precise event schema must be implemented and tested.
 
 The documented `graph auth <DEPLOY_KEY>` command is also available, but the chosen automation passes `--deploy-key` to the deployment process rather than storing it in persistent CLI configuration. The deploy flag is confirmed in [official CLI source](https://github.com/graphprotocol/graph-tooling/blob/main/packages/cli/src/commands/deploy.ts). Deployment output must be redacted if it contains credentials or credential-bearing URLs. This CLI is The Graph's development tool, not an MCP integration.
 

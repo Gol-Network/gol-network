@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-GOL is a pnpm monorepo. `contracts/` contains Solidity accounts, Foundry tests, and deployment scripts. Shared ABIs, constants, validation, and types live in `packages/protocol/`. `agent/` implements the PostgreSQL journal, model adapter, Privy signer, payment worker, and CLI. `subgraph/` holds The Graph schema, mappings, queries, and Matchstick tests. The Next.js application and API routes are in `web/`; follow the additional instructions in `web/AGENTS.md` when editing that package. Operational assets live in `deploy/` and `deployments/`, while product specifications and evidence are under `spec/`. Static images belong in `assets/`.
+GOL is a pnpm monorepo. `contracts/` contains Solidity accounts, Foundry tests, and deployment scripts. Shared ABIs, constants, validation, and types live in `packages/protocol/`. `agent/` implements the PostgreSQL journal, model adapter, Privy signer, payment worker, and CLI. `subgraph/` holds The Graph schema, mappings, queries, and Matchstick tests. The Next.js application and API routes are in `web/`; follow the additional instructions in `web/AGENTS.md` when editing that package. Operator tooling lives in `scripts/`: the redacted provider preflight, subgraph preparation, and the live acceptance runner. Operational assets live in `deploy/` and `deployments/`, while product specifications and evidence are under `spec/`. Static images belong in `assets/`.
 
 ## Build, Test, and Development Commands
 
@@ -15,6 +15,8 @@ Use Node 22 and pnpm 11.17.0.
 - `pnpm --filter @gol/subgraph codegen && pnpm --filter @gol/subgraph build` regenerates and validates subgraph types.
 - `pnpm --filter @gol/web test:e2e` runs Playwright browser tests.
 - `pnpm format:check` checks formatting; use `pnpm format` to apply Prettier.
+- `docker compose -f deploy/docker-compose.yml config -q` validates the production stack.
+- `pnpm preflight`, `pnpm policy:probe`, and `pnpm subgraph:prepare` are operator commands that need real configuration; they print booleans, public identifiers, and error codes only.
 
 ## Coding Style & Naming Conventions
 
@@ -26,4 +28,4 @@ Place Vitest files in package `test/` or `tests/` directories with `*.test.ts`; 
 
 ## Commit & Pull Request Guidelines
 
-Recent commits use short imperative subjects with prefixes such as `feat:`, `fix:`, `docs:`, and `ops:`. Keep each commit focused. Pull requests should explain the behavior and trust-boundary impact, list verification commands, link relevant issues/specs, and include screenshots for UI changes. Never commit secrets or real API keys; update `deploy/.env.example` for new configuration and keep deployment placeholders honest until independently verified.
+Recent commits use short imperative subjects with prefixes such as `feat:`, `fix:`, `docs:`, and `ops:`. Keep each commit focused. Pull requests should explain the behavior and trust-boundary impact, list verification commands, link relevant issues/specs, and include screenshots for UI changes. Never commit secrets or real API keys; update `deploy/.env.example` for new configuration and keep deployment placeholders honest until independently verified. Browser configuration is read on the server at runtime and passed to client components as typed props, so do not reintroduce build-time `NEXT_PUBLIC_*` values.

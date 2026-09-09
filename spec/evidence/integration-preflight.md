@@ -60,4 +60,6 @@ The following evidence does not exist yet and must not be inferred from local fi
 - public HTTPS URL, production health response, restart recovery, and off-host S3 backup URI
 - clean-browser screenshots of the deployed interactive flow
 
-Run `pnpm demo:acceptance` only after these integrations are configured. Save its JSON output with the deployed source commit as the final acceptance record.
+Prepare the manifest with `pnpm subgraph:prepare`, which refuses a deployment record that still reports `not_deployed`. Then run `pnpm preflight` and, with `GOL_POLICY_PROBE=1`, `pnpm policy:probe`; both print booleans, public identifiers, and error codes only. Run `pnpm demo:acceptance` last, and only after these integrations are configured. Save its JSON output — which now records the deployed source commit, the public application URL, the Privy policy ID, both indexed action IDs, and the answer citations — as the final acceptance record.
+
+Configuration presence alone is never acceptance. The preflight and the probe reduce the number of surprises during the live sequence; only the real 100/40/70 flow with matching Arc receipts, Graph records, and visible answer citations closes this gate.
