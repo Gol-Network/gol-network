@@ -1,5 +1,8 @@
 import {
+  ACTIVITY_PAGE_MAX,
+  ANSWER_RECORD_MAX,
   ARC_TESTNET_CHAIN_ID,
+  REFUSAL_RULES,
   type AccountScope,
   type ActivityFilter,
   type ActivityPage,
@@ -7,15 +10,15 @@ import {
   type Address,
   type Hex32,
 } from '@gol/protocol';
+import { z } from 'zod';
 
-const ACTIVITY_QUERY = `query Activity($account: Bytes!, $first: Int!, $before: BigInt!) {
-  actions(first: $first, orderBy: sequence, orderDirection: desc,
-    where: { account: $account, sequence_lt: $before }) {
-    id requestId mandate { mandateId cumulativeCap } agent recipient outcome rule reason
-    attempted transferred headroom spentAfter sequence transactionHash blockNumber blockHash timestamp logIndex
-  }
-  _meta { block { number hash timestamp } hasIndexingErrors deployment }
-}`;
+const MAX_SEQUENCE = '340282366920938463463374607431768211455';
+
+const ACTION_FIELDS = `id requestId account { id } mandate { id mandateId cumulativeCap }
+    agent recipient outcome rule reason attempted transferred headroom spentAfter sequence
+    transactionHash blockNumber blockHash timestamp logIndex`;
+
+const META_FIELDS = `_meta { block { number hash timestamp } hasIndexingErrors deployment }`;
 
 export interface GraphTransport {
   request(body: { query: string; variables: Record<string, unknown> }): Promise<unknown>;
@@ -48,25 +51,115 @@ export class HttpGraphTransport implements GraphTransport {
   }
 }
 
-interface RawAction {
-  id: string;
-  requestId: string;
-  mandate: { mandateId: string; cumulativeCap: string };
-  agent: string;
-  recipient: string;
-  outcome: 'EXECUTED' | 'REFUSED';
-  rule: string;
-  reason: string;
-  attempted: string;
-  transferred: string;
-  headroom: string;
-  spentAfter: string;
-  sequence: string;
-  transactionHash: string;
-  blockNumber: string;
-  blockHash: string;
-  timestamp: string;
-  logIndex: string;
+const hexId = z.string().regex(/^0x[0-9a-fA-F]+$/);
+const hash32 = z.string().regex(/^0x[0-9a-fA-F]{64}$/);
+const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
+const units = z.string().regex(/^(0|[1-9][0-9]*)$/);
+
+const rawActionSchema = z.object({
+  id: hexId,
+  requestId: hash32,
+  account: z.object({ id: address }),
+  mandate: z.object({ id: z.string().min(1), mandateId: units, cumulativeCap: units }),
+  agent: address,
+  recipient: address,
+  outcome: z.enum(['EXECUTED', 'REFUSED']),
+  rule: z.enum(REFUSAL_RULES),
+  reason: z.string().max(200),
+  attempted: units,
+  transferred: units,
+  headroom: units,
+  spentAfter: units,
+  sequence: units,
+  transactionHash: hash32,
+  blockNumber: units,
+  blockHash: hash32,
+  timestamp: units,
+  logIndex: units,
+});
+
+const responseSchema = z.object({
+  errors: z.array(z.unknown()).optional(),
+  data: z
+    .object({
+      actions: z.array(rawActionSchema),
+      _meta: z.object({
+        block: z.object({
+          number: z.number().int().nonnegative(),
+          hash: hash32.nullable().optional(),
+          timestamp: z.number().int().nonnegative().nullable().optional(),
+        }),
+        hasIndexingErrors: z.boolean().nullable().optional(),
+        deployment: z.string().min(1).nullable().optional(),
+      }),
+    })
+    .optional(),
+});
+
+type RawAction = z.infer<typeof rawActionSchema>;
+type GraphMeta = NonNullable<z.infer<typeof responseSchema>['data']>['_meta'];
+
+class GraphIntegrityError extends Error {
+  readonly code = 'INTEGRITY_MISMATCH';
+}
+
+/**
+ * Builds one scoped GraphQL document. Every filter is applied in the `where` clause before
+ * pagination, so a page is never fetched and then discarded client-side.
+ */
+export function buildActivityQuery(
+  scope: AccountScope,
+  filter: ActivityFilter,
+): { query: string; variables: Record<string, unknown> } {
+  const first = Math.min(Math.max(Math.trunc(filter.first), 1), ACTIVITY_PAGE_MAX);
+  const declarations = ['$account: Bytes!', '$first: Int!', '$before: BigInt!'];
+  const clauses = ['account: $account', 'sequence_lt: $before'];
+  const variables: Record<string, unknown> = {
+    account: scope.account.toLowerCase(),
+    first,
+    before: filter.cursor ?? MAX_SEQUENCE,
+  };
+
+  if (filter.outcome) {
+    declarations.push('$outcome: String!');
+    clauses.push('outcome: $outcome');
+    variables.outcome = filter.outcome;
+  }
+  if (filter.rule) {
+    declarations.push('$rule: String!');
+    clauses.push('rule: $rule');
+    variables.rule = filter.rule;
+  }
+  const mandateId = filter.mandateId ?? scope.mandateId;
+  if (mandateId) {
+    declarations.push('$mandate: String!');
+    clauses.push('mandate: $mandate');
+    variables.mandate = `${scope.account.toLowerCase()}:${mandateId}`;
+  }
+  if (scope.agent) {
+    declarations.push('$agent: Bytes!');
+    clauses.push('agent: $agent');
+    variables.agent = scope.agent.toLowerCase();
+  }
+  if (filter.fromTimestamp) {
+    declarations.push('$fromTimestamp: BigInt!');
+    clauses.push('timestamp_gte: $fromTimestamp');
+    variables.fromTimestamp = filter.fromTimestamp;
+  }
+  if (filter.toTimestamp) {
+    declarations.push('$toTimestamp: BigInt!');
+    clauses.push('timestamp_lte: $toTimestamp');
+    variables.toTimestamp = filter.toTimestamp;
+  }
+
+  const query = `query Activity(${declarations.join(', ')}) {
+  actions(first: $first, orderBy: sequence, orderDirection: desc,
+    where: { ${clauses.join(', ')} }) {
+    ${ACTION_FIELDS}
+  }
+  ${META_FIELDS}
+}`;
+  return { query, variables };
 }
 
 export async function getActivity(
@@ -76,61 +169,131 @@ export async function getActivity(
   chain: ChainHeadSource,
 ): Promise<ActivityPage> {
   if (scope.chainId !== ARC_TESTNET_CHAIN_ID) throw new Error('Wrong chain');
-  const first = Math.min(Math.max(filter.first, 1), 50);
-  const before = filter.cursor ?? '340282366920938463463374607431768211455';
+  const first = Math.min(Math.max(Math.trunc(filter.first), 1), ACTIVITY_PAGE_MAX);
   try {
-    const [raw, head] = await Promise.all([
-      graph.request({
-        query: ACTIVITY_QUERY,
-        variables: { account: scope.account.toLowerCase(), first, before },
-      }),
-      chain.getHead(),
-    ]);
-    const response = raw as {
-      data?: {
-        actions?: RawAction[];
-        _meta?: {
-          block?: { number: number; hash?: string; timestamp?: number };
-          hasIndexingErrors?: boolean;
-          deployment?: string;
-        };
-      };
-      errors?: unknown[];
-    };
-    if (response.errors?.length || !response.data?.actions || !response.data._meta?.block) {
-      throw new Error('Graph response is incomplete');
-    }
-    const records = response.data.actions
-      .map(toActivityRecord)
-      .filter((record) => matches(record, filter));
-    const indexedTimestamp = BigInt(response.data._meta.block.timestamp ?? 0);
-    const lag = head.timestamp > indexedTimestamp ? head.timestamp - indexedTimestamp : 0n;
-    const hasErrors = response.data._meta.hasIndexingErrors ?? null;
-    const freshness =
-      hasErrors === true
-        ? 'stale'
-        : indexedTimestamp === 0n
-          ? 'unknown'
-          : lag > 60n
-            ? 'stale'
-            : lag > 15n
-              ? 'catching_up'
-              : 'current';
-    return {
-      records,
-      cursor: records.length === first ? records.at(-1)!.sequence : null,
-      indexedBlock: String(response.data._meta.block.number),
-      indexedBlockHash: (response.data._meta.block.hash as Hex32 | undefined) ?? null,
-      indexedAt: indexedTimestamp === 0n ? null : indexedTimestamp.toString(),
-      chainHeadBlock: head.number.toString(),
-      hasIndexingErrors: hasErrors,
-      freshness,
-      sourceDeployment: response.data._meta.deployment ?? null,
-      partial: response.data.actions.length === first,
-    };
-  } catch {
-    return unavailablePage();
+    const { records, meta, head } = await fetchPage(scope, { ...filter, first }, graph, chain);
+    return page(records, meta, head, {
+      cursor: records.length === first ? (records.at(-1)?.sequence ?? null) : null,
+      partial: records.length === first,
+    });
+  } catch (error) {
+    return unavailablePage(error instanceof GraphIntegrityError);
   }
+}
+
+/**
+ * Loads the evidence a grounded answer may cite. It follows the deterministic sequence cursor over
+ * multiple pages but stops at {@link ANSWER_RECORD_MAX} scoped records and reports truncation.
+ */
+export async function getAnswerEvidence(
+  scope: AccountScope,
+  filter: Omit<ActivityFilter, 'first' | 'cursor'>,
+  graph: GraphTransport,
+  chain: ChainHeadSource,
+): Promise<ActivityPage> {
+  if (scope.chainId !== ARC_TESTNET_CHAIN_ID) throw new Error('Wrong chain');
+  const collected: ActivityRecord[] = [];
+  let cursor: string | undefined;
+  let meta: GraphMeta | null = null;
+  let head: { number: bigint; timestamp: bigint } | null = null;
+  let truncated = false;
+
+  try {
+    for (let request = 0; request < 4; request += 1) {
+      const remaining = ANSWER_RECORD_MAX - collected.length;
+      if (remaining <= 0) break;
+      const size = Math.min(remaining, ACTIVITY_PAGE_MAX);
+      const result = await fetchPage(
+        scope,
+        { ...filter, first: size, ...(cursor ? { cursor } : {}) },
+        graph,
+        chain,
+      );
+      meta = result.meta;
+      head = result.head;
+      collected.push(...result.records);
+      if (result.records.length < size) break;
+      cursor = result.records.at(-1)?.sequence;
+      if (!cursor) break;
+      if (collected.length >= ANSWER_RECORD_MAX) {
+        truncated = true;
+        break;
+      }
+    }
+    if (!meta || !head) throw new Error('Graph response is incomplete');
+    return page(collected.slice(0, ANSWER_RECORD_MAX), meta, head, {
+      cursor: truncated ? (cursor ?? null) : null,
+      partial: truncated,
+    });
+  } catch (error) {
+    return unavailablePage(error instanceof GraphIntegrityError);
+  }
+}
+
+async function fetchPage(
+  scope: AccountScope,
+  filter: ActivityFilter,
+  graph: GraphTransport,
+  chain: ChainHeadSource,
+): Promise<{
+  records: ActivityRecord[];
+  meta: GraphMeta;
+  head: { number: bigint; timestamp: bigint };
+}> {
+  const [raw, head] = await Promise.all([
+    graph.request(buildActivityQuery(scope, filter)),
+    chain.getHead(),
+  ]);
+  const parsed = responseSchema.safeParse(raw);
+  if (!parsed.success) throw new GraphIntegrityError('Graph response failed validation');
+  if (parsed.data.errors?.length) throw new Error('Graph response reported errors');
+  if (!parsed.data.data) throw new Error('Graph response is incomplete');
+  const { actions, _meta } = parsed.data.data;
+  for (const action of actions) {
+    if (action.account.id.toLowerCase() !== scope.account.toLowerCase()) {
+      throw new GraphIntegrityError('Graph returned an out-of-scope account');
+    }
+    if (action.outcome === 'EXECUTED' && action.transferred !== action.attempted) {
+      throw new GraphIntegrityError('Executed record transferred an unexpected amount');
+    }
+    if (action.outcome === 'REFUSED' && action.transferred !== '0') {
+      throw new GraphIntegrityError('Refused record transferred a non-zero amount');
+    }
+  }
+  return { records: actions.map(toActivityRecord), meta: _meta, head };
+}
+
+function page(
+  records: ActivityRecord[],
+  meta: GraphMeta,
+  head: { number: bigint; timestamp: bigint },
+  pagination: { cursor: string | null; partial: boolean },
+): ActivityPage {
+  const indexedTimestamp = BigInt(meta.block.timestamp ?? 0);
+  const lag = head.timestamp > indexedTimestamp ? head.timestamp - indexedTimestamp : 0n;
+  const hasErrors = meta.hasIndexingErrors ?? null;
+  const freshness =
+    hasErrors === true
+      ? 'stale'
+      : indexedTimestamp === 0n
+        ? 'unknown'
+        : lag > 60n
+          ? 'stale'
+          : lag > 15n
+            ? 'catching_up'
+            : 'current';
+  return {
+    records,
+    cursor: pagination.cursor,
+    indexedBlock: String(meta.block.number),
+    indexedBlockHash: (meta.block.hash as Hex32 | undefined) ?? null,
+    indexedAt: indexedTimestamp === 0n ? null : indexedTimestamp.toString(),
+    chainHeadBlock: head.number.toString(),
+    hasIndexingErrors: hasErrors,
+    freshness,
+    sourceDeployment: meta.deployment ?? null,
+    partial: pagination.partial,
+  };
 }
 
 function toActivityRecord(action: RawAction): ActivityRecord {
@@ -156,16 +319,7 @@ function toActivityRecord(action: RawAction): ActivityRecord {
   };
 }
 
-function matches(record: ActivityRecord, filter: ActivityFilter): boolean {
-  if (filter.outcome && record.outcome !== filter.outcome) return false;
-  if (filter.rule && record.rule !== filter.rule) return false;
-  if (filter.mandateId && record.mandateId !== filter.mandateId) return false;
-  if (filter.fromTimestamp && BigInt(record.timestamp) < BigInt(filter.fromTimestamp)) return false;
-  if (filter.toTimestamp && BigInt(record.timestamp) > BigInt(filter.toTimestamp)) return false;
-  return true;
-}
-
-function unavailablePage(): ActivityPage {
+function unavailablePage(integrityMismatch: boolean): ActivityPage {
   return {
     records: [],
     cursor: null,
@@ -177,5 +331,6 @@ function unavailablePage(): ActivityPage {
     freshness: 'unavailable',
     sourceDeployment: null,
     partial: false,
+    ...(integrityMismatch ? { integrityMismatch: true } : {}),
   };
 }

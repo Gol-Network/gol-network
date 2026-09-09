@@ -154,10 +154,27 @@ describe('payment worker recovery', () => {
     expect(journal.finishes.at(-1)).toMatchObject({ state: 'executed' });
   });
 
-  it('never signs again after recovering an ambiguous signing state', async () => {
-    const journal = new FakeJournal(
+  it('replays a lost signing response with the same Privy idempotency key', async () => {
+    const signer = new FakeSigner();
+    const first = new FakeJournal(job());
+    await new PaymentWorker('worker-1', first, { resolve: async () => context(signer) }).tick();
+    const original = signer.sendTransaction.mock.calls[0]![0];
+
+    // The worker stopped after marking the request as signing but before Privy's response landed.
+    const recovered = new FakeJournal(
       job({ state: 'signing', parsedRecipient: RECIPIENT, parsedAmount: '40000000' }),
     );
+    await new PaymentWorker('worker-1', recovered, { resolve: async () => context(signer) }).tick();
+
+    expect(signer.sendTransaction).toHaveBeenCalledTimes(2);
+    const replayed = signer.sendTransaction.mock.calls[1]![0];
+    expect(replayed.referenceId).toBe(REQUEST.slice(2));
+    expect(replayed).toEqual(original);
+    expect(recovered.finishes.at(-1)).toMatchObject({ state: 'executed' });
+  });
+
+  it('reports an unresolved signing state without a stored intent as unknown', async () => {
+    const journal = new FakeJournal(job({ state: 'signing' }));
     const signer = new FakeSigner();
     const worker = new PaymentWorker('worker-1', journal, { resolve: async () => context(signer) });
     await worker.tick();

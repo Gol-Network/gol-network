@@ -1,9 +1,10 @@
 import { answerQuestion } from '@gol/agent/query';
 import { OpenAIJsonModel } from '@gol/agent/model';
-import { addressSchema } from '@gol/protocol';
+import { ARC_TESTNET_CHAIN_ID, addressSchema } from '@gol/protocol';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { activityFor } from '@/server/activity';
+import { evidenceFor } from '@/server/activity';
+import { runtimeConfig } from '@/server/env';
 import {
   authenticate,
   errorResponse,
@@ -36,15 +37,17 @@ export async function POST(request: Request) {
     if (body.account && body.account.toLowerCase() !== account.toLowerCase()) {
       throw new HttpError(403, 'ACCOUNT_SCOPE_MISMATCH');
     }
-    const page = await activityFor(account, { first: 50 });
-    const model = process.env.OPENAI_API_KEY
-      ? new OpenAIJsonModel({ apiKey: process.env.OPENAI_API_KEY })
+    // The question path reads indexed evidence only. It never enqueues work or touches the signer.
+    const evidence = await evidenceFor(account);
+    const { public: publicConfig, server } = runtimeConfig();
+    const model = server.openAiApiKey
+      ? new OpenAIJsonModel({ apiKey: server.openAiApiKey })
       : undefined;
     const answer = await answerQuestion(
-      { chainId: 5_042_002, account },
+      { chainId: ARC_TESTNET_CHAIN_ID, account },
       body.question,
-      { get: async () => page },
-      process.env.ARC_EXPLORER_URL ?? 'https://testnet.arcscan.app',
+      { get: async () => evidence },
+      publicConfig.explorerUrl,
       model,
     );
     return NextResponse.json(answer);

@@ -68,6 +68,7 @@ export class PaymentWorker {
     if (!job) return false;
     const dependencies = await this.resolver.resolve(job);
 
+    // Any known provider result is reconciled before a submission is considered.
     if (job.txHash) {
       await this.reconcile(job, dependencies, job.txHash);
       return true;
@@ -90,6 +91,23 @@ export class PaymentWorker {
       await this.reconcile(job, dependencies, submission.txHash);
       return true;
     }
+
+    // A request marked signing lost the provider response before it was persisted. The stored
+    // intent is replayed under the same request ID, so Privy's idempotency key converges on the
+    // original operation instead of creating a second business request.
+    if (job.state === 'signing') {
+      const intent = storedIntent(job);
+      if (!intent) {
+        await this.journal.finish(job.id, this.workerId, {
+          state: 'unknown',
+          errorCode: 'AMBIGUOUS_SIGNING_STATE',
+        });
+        return true;
+      }
+      await this.submit(job, dependencies, intent);
+      return true;
+    }
+
     if (job.state !== 'queued') {
       await this.journal.finish(job.id, this.workerId, {
         state: 'unknown',
@@ -113,14 +131,22 @@ export class PaymentWorker {
       parsed.intent.recipient,
       amount.toString(),
     );
+    await this.submit(job, dependencies, parsed.intent);
+    return true;
+  }
 
+  private async submit(
+    job: JournalRequest,
+    dependencies: WorkerContext,
+    intent: PaymentIntent,
+  ): Promise<void> {
     try {
       const { createPaymentTransaction } = await import('./submit-transaction.js');
       const transaction = createPaymentTransaction(
         dependencies.context,
         job.requestId,
         job.mandateId,
-        parsed.intent,
+        intent,
       );
       const submission = await dependencies.signer.sendTransaction(transaction);
       await this.journal.recordSubmission(
@@ -129,14 +155,13 @@ export class PaymentWorker {
         submission.providerOperationId,
         submission.txHash,
       );
-      await this.reconcile(job, dependencies, submission.txHash, parsed.intent);
+      await this.reconcile(job, dependencies, submission.txHash, intent);
     } catch (error) {
       await this.journal.finish(job.id, this.workerId, {
         state: error instanceof SignerPolicyError ? 'signer_blocked' : 'unknown',
         errorCode: error instanceof SignerPolicyError ? 'SIGNER_BLOCKED' : 'SUBMISSION_AMBIGUOUS',
       });
     }
-    return true;
   }
 
   private async reconcile(
@@ -170,8 +195,13 @@ export class PaymentWorker {
   }
 }
 
-function recoveredIntent(job: JournalRequest): PaymentIntent {
-  if (!job.parsedRecipient || !job.parsedAmount)
-    throw new Error('Stored payment intent is missing');
+function storedIntent(job: JournalRequest): PaymentIntent | null {
+  if (!job.parsedRecipient || !job.parsedAmount) return null;
   return { recipient: job.parsedRecipient, amountUsdc: formatUsdc(BigInt(job.parsedAmount)) };
+}
+
+function recoveredIntent(job: JournalRequest): PaymentIntent {
+  const intent = storedIntent(job);
+  if (!intent) throw new Error('Stored payment intent is missing');
+  return intent;
 }

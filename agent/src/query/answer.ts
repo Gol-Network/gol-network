@@ -1,7 +1,10 @@
 import {
+  ANSWER_RECORD_MAX,
   formatUsdc,
   type AccountScope,
   type ActivityPage,
+  type ActivityRecord,
+  type Citation,
   type GroundedAnswer,
 } from '@gol/protocol';
 import type { JsonModel } from '../model/types.js';
@@ -9,6 +12,9 @@ import type { JsonModel } from '../model/types.js';
 export interface ActivityProvider {
   get(scope: AccountScope): Promise<ActivityPage>;
 }
+
+const HASH = /^0x[0-9a-fA-F]{64}$/;
+const LOG_INDEX = /^(0|[1-9][0-9]*)$/;
 
 export async function answerQuestion(
   scope: AccountScope,
@@ -22,7 +28,10 @@ export async function answerQuestion(
   }
   const page = await activity.get(scope);
   if (page.freshness === 'unavailable') {
-    return { ...base('unavailable', 'Indexed activity is unavailable.'), partial: false };
+    return {
+      ...base('unavailable', 'Indexed activity is unavailable.'),
+      freshness: 'unavailable',
+    };
   }
   const records = selectRecords(question, page);
   if (records.length === 0) {
@@ -32,15 +41,13 @@ export async function answerQuestion(
         `No matching records indexed${page.indexedBlock ? ` through block ${page.indexedBlock}` : ''}.`,
       ),
       indexedBlock: page.indexedBlock,
+      indexedAt: page.indexedAt,
       sourceDeployment: page.sourceDeployment,
+      freshness: page.freshness,
+      partial: page.partial,
     };
   }
-  const citations = records.map((record) => ({
-    actionId: record.actionId,
-    txHash: record.transactionHash,
-    logIndex: record.logIndex,
-    explorerUrl: `${explorerBaseUrl.replace(/\/$/, '')}/tx/${record.transactionHash}`,
-  }));
+  const citations = buildCitations(records, explorerBaseUrl);
   const selected = records[0]!;
   const prefix =
     page.freshness === 'stale' ? `Based on records through block ${page.indexedBlock}. ` : '';
@@ -50,6 +57,7 @@ export async function answerQuestion(
       : `${prefix}${formatUsdc(BigInt(selected.transferred))} USDC was executed, leaving ${formatUsdc(BigInt(selected.headroom))} USDC of mandate headroom.`;
 
   let text = deterministic;
+  let usedModel = false;
   let status: GroundedAnswer['status'] =
     page.freshness === 'stale' ? 'stale' : page.partial ? 'partial' : 'answer';
   if (model) {
@@ -77,6 +85,7 @@ export async function answerQuestion(
         validateNumbers(generated.text, records)
       ) {
         text = generated.text;
+        usedModel = true;
       } else {
         status = 'model_error';
         text = `Explanation unavailable. ${deterministic}`;
@@ -91,17 +100,36 @@ export async function answerQuestion(
     text,
     citations,
     indexedBlock: page.indexedBlock,
+    indexedAt: page.indexedAt,
     sourceDeployment: page.sourceDeployment,
+    freshness: page.freshness,
     recordCount: records.length,
     partial: page.partial,
+    deterministic: !usedModel,
   };
+}
+
+/**
+ * Explorer links are built here, in trusted code, from validated hashes. A model-supplied URL is
+ * never rendered.
+ */
+function buildCitations(records: ActivityRecord[], explorerBaseUrl: string): Citation[] {
+  const base = explorerBaseUrl.replace(/\/$/, '');
+  return records
+    .filter((record) => HASH.test(record.transactionHash) && LOG_INDEX.test(record.logIndex))
+    .map((record) => ({
+      actionId: record.actionId,
+      txHash: record.transactionHash,
+      logIndex: record.logIndex,
+      explorerUrl: `${base}/tx/${record.transactionHash}`,
+    }));
 }
 
 function selectRecords(question: string, page: ActivityPage) {
   const asksRefusal = /refus|denied|why|cap|limit/i.test(question);
   return page.records
     .filter((record) => !asksRefusal || record.outcome === 'REFUSED')
-    .slice(0, 200);
+    .slice(0, ANSWER_RECORD_MAX);
 }
 
 function validateNumbers(text: string, records: ActivityPage['records']): boolean {
@@ -137,8 +165,11 @@ function base(status: GroundedAnswer['status'], text: string): GroundedAnswer {
     text,
     citations: [],
     indexedBlock: null,
+    indexedAt: null,
     sourceDeployment: null,
+    freshness: 'unknown',
     recordCount: 0,
     partial: false,
+    deterministic: true,
   };
 }

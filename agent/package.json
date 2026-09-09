@@ -18,6 +18,14 @@
     "./model": {
       "types": "./src/model/index.ts",
       "default": "./dist/model/index.js"
+    },
+    "./privy": {
+      "types": "./src/privy/policy.ts",
+      "default": "./dist/privy/policy.js"
+    },
+    "./instruction": {
+      "types": "./src/payment/parse-instruction.ts",
+      "default": "./dist/payment/parse-instruction.js"
     }
   },
   "scripts": {
@@ -25,7 +33,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "cli": "tsx src/cli.ts",
-    "worker": "tsx src/payment/worker-entry.ts"
+    "worker": "tsx src/payment/worker-entry.ts",
+    "probe": "tsx src/tools/policy-probe.ts"
   },
   "dependencies": {
     "@gol/protocol": "workspace:*",

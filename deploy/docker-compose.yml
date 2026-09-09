@@ -7,7 +7,7 @@ services:
     environment:
       POSTGRES_DB: gol
       POSTGRES_USER: gol_admin
-      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:-}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks: [private]
@@ -20,8 +20,8 @@ services:
   migrate:
     image: postgres:17.6-alpine
     environment:
-      PGPASSWORD: ${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD}
-      POSTGRES_RUNTIME_PASSWORD: ${POSTGRES_RUNTIME_PASSWORD:?set POSTGRES_RUNTIME_PASSWORD}
+      PGPASSWORD: ${POSTGRES_ADMIN_PASSWORD:-}
+      POSTGRES_RUNTIME_PASSWORD: ${POSTGRES_RUNTIME_PASSWORD:-}
     volumes:
       - ../agent/src/db/schema.sql:/migrations/001.sql:ro
       - ./migrate.sh:/migrations/migrate.sh:ro
@@ -41,7 +41,9 @@ services:
       - path: .env.production
         required: false
     environment:
-      DATABASE_URL: postgresql://gol_runtime:${POSTGRES_RUNTIME_PASSWORD}@postgres:5432/gol
+      DATABASE_URL: postgresql://gol_runtime:${POSTGRES_RUNTIME_PASSWORD:-}@postgres:5432/gol
+      GOL_SOURCE_COMMIT: ${RELEASE_COMMIT:-}
+    # Caddy is the only public ingress; no host port is published for the application itself.
     networks: [public, private]
     depends_on:
       migrate: { condition: service_completed_successfully }
@@ -69,8 +71,11 @@ services:
       - path: .env.production
         required: false
     environment:
-      DATABASE_URL: postgresql://gol_runtime:${POSTGRES_RUNTIME_PASSWORD}@postgres:5432/gol
-    networks: [private]
+      DATABASE_URL: postgresql://gol_runtime:${POSTGRES_RUNTIME_PASSWORD:-}@postgres:5432/gol
+      GOL_SOURCE_COMMIT: ${RELEASE_COMMIT:-}
+    # The worker needs outbound access to Privy, Arc, and OpenAI as well as private PostgreSQL.
+    # It publishes no port, so `public` grants egress without any inbound exposure.
+    networks: [public, private]
     depends_on:
       migrate: { condition: service_completed_successfully }
     stop_grace_period: 45s
@@ -80,7 +85,7 @@ services:
     image: caddy:2.10.2-alpine
     restart: unless-stopped
     environment:
-      DOMAIN: ${DOMAIN:?set DOMAIN}
+      DOMAIN: ${DOMAIN:-}
     ports:
       - '80:80'
       - '443:443'

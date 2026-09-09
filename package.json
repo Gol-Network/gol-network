@@ -13,7 +13,10 @@
     "lint": "pnpm -r --if-present lint",
     "demo:acceptance": "pnpm --filter @gol/agent exec tsx ../scripts/demo.ts",
     "format:check": "prettier --check .",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "preflight": "pnpm --filter @gol/agent exec tsx ../scripts/preflight.ts",
+    "policy:probe": "pnpm --filter @gol/agent probe",
+    "subgraph:prepare": "pnpm --filter @gol/agent exec tsx ../scripts/prepare-subgraph.ts"
   },
   "devDependencies": {
     "prettier": "3.9.6",

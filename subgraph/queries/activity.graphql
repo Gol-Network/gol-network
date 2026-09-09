@@ -1,12 +1,28 @@
-query Activity($account: Bytes!, $first: Int!, $before: BigInt!) {
+query Activity(
+  $account: Bytes!
+  $first: Int!
+  $before: BigInt!
+  $outcome: String
+  $rule: String
+  $mandate: String
+) {
   actions(
     first: $first
     orderBy: sequence
     orderDirection: desc
-    where: { account: $account, sequence_lt: $before }
+    where: {
+      account: $account
+      sequence_lt: $before
+      outcome: $outcome
+      rule: $rule
+      mandate: $mandate
+    }
   ) {
     id
     requestId
+    account {
+      id
+    }
     mandate {
       id
       mandateId

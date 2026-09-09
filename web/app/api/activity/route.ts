@@ -1,15 +1,16 @@
-import { addressSchema } from '@gol/protocol';
+import { ACTIVITY_PAGE_MAX, REFUSAL_RULES, addressSchema } from '@gol/protocol';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { authenticate, errorResponse, HttpError, pool } from '@/server/core';
 import { activityFor } from '@/server/activity';
+import { runtimeConfig } from '@/server/env';
 
 export const runtime = 'nodejs';
 
 const querySchema = z.object({
   account: addressSchema,
   outcome: z.enum(['EXECUTED', 'REFUSED']).optional(),
-  rule: z.string().max(64).optional(),
+  rule: z.enum(REFUSAL_RULES).optional(),
   mandateId: z
     .string()
     .regex(/^[1-9][0-9]*$/)
@@ -22,7 +23,7 @@ const querySchema = z.object({
     .string()
     .regex(/^[0-9]+$/)
     .optional(),
-  first: z.coerce.number().int().min(1).max(50).default(50),
+  first: z.coerce.number().int().min(1).max(ACTIVITY_PAGE_MAX).default(ACTIVITY_PAGE_MAX),
   cursor: z
     .string()
     .regex(/^[0-9]+$/)
@@ -33,7 +34,7 @@ export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const parsed = querySchema.parse(Object.fromEntries(url.searchParams));
-    const demo = process.env.DEMO_ACCOUNT?.toLowerCase();
+    const demo = runtimeConfig().server.demoAccount?.toLowerCase();
     if (parsed.account.toLowerCase() !== demo) {
       const session = await authenticate(request);
       const linked = await pool.query(

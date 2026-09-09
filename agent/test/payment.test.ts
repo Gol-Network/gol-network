@@ -21,7 +21,11 @@ import {
   type StoredRequest,
   type TransactionRequest,
 } from '../src/payment/types.js';
-import { assertPolicyTransaction, buildAgentSignerPolicy } from '../src/privy/policy.js';
+import {
+  agentPolicyDisclosure,
+  buildAgentSignerPolicy,
+  evaluateAgentPolicy,
+} from '../src/privy/policy.js';
 
 const ACCOUNT = '0x0000000000000000000000000000000000Acc017' as Address;
 const AGENT = '0x00000000000000000000000000000000000A6E17' as Address;
@@ -185,17 +189,41 @@ describe('payment submission', () => {
   });
 });
 
-describe('restricted signer policy', () => {
-  it('allows only zero-value calls to the configured account and chain', () => {
-    const policy = buildAgentSignerPolicy(ACCOUNT);
-    expect(() =>
-      assertPolicyTransaction(policy, { chainId: ARC_TESTNET_CAIP2, to: ACCOUNT, value: 0n }),
-    ).not.toThrow();
-    expect(() =>
-      assertPolicyTransaction(policy, { chainId: ARC_TESTNET_CAIP2, to: RECIPIENT, value: 0n }),
-    ).toThrow('SIGNER_POLICY_DENIED');
-    expect(() =>
-      assertPolicyTransaction(policy, { chainId: ARC_TESTNET_CAIP2, to: ACCOUNT, value: 1n }),
-    ).toThrow('SIGNER_POLICY_DENIED');
+describe('canonical restricted signer policy', () => {
+  const policy = buildAgentSignerPolicy(ACCOUNT);
+  const allowed = {
+    method: 'eth_sendTransaction',
+    chainId: ARC_TESTNET_CHAIN_ID,
+    to: ACCOUNT,
+    value: 0n,
+  };
+
+  it('permits exactly one envelope', () => {
+    expect(evaluateAgentPolicy(policy, allowed)).toBe('ALLOW');
+    expect(evaluateAgentPolicy(policy, { ...allowed, chainId: ARC_TESTNET_CAIP2 })).toBe('ALLOW');
+  });
+
+  it.each([
+    ['wrong chain', { ...allowed, chainId: 1 }],
+    ['wrong destination', { ...allowed, to: RECIPIENT }],
+    ['missing destination', { ...allowed, to: null }],
+    ['non-zero native value', { ...allowed, value: 1n }],
+    ['another method', { ...allowed, method: 'personal_sign' }],
+    ['typed data signing', { ...allowed, method: 'eth_signTypedData_v4' }],
+  ])('denies %s by default', (_name, envelope) => {
+    expect(evaluateAgentPolicy(policy, envelope)).toBe('DENY');
+  });
+
+  it('submits the same rules it displays and never claims calldata restriction', () => {
+    const disclosure = agentPolicyDisclosure(ACCOUNT);
+    expect(disclosure.policyName).toBe(policy.name);
+    expect(disclosure.destination).toBe(ACCOUNT);
+    expect(disclosure.calldataRestricted).toBe(false);
+    expect(policy.name.toLowerCase()).not.toContain('pay only');
+    expect(policy.rules[0]!.conditions.map((condition) => condition.field)).toEqual([
+      'chain_id',
+      'to',
+      'value',
+    ]);
   });
 });

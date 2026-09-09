@@ -1,54 +1,51 @@
 'use client';
 
 import { usePrivy, useWallets } from '@privy-io/react-auth';
-import { addressSchema, type ActivityRecord, type Address } from '@gol/protocol';
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
-  createAccount,
-  createMandate,
-  fundAccount,
-  readAccount,
-  revokeMandate,
-  withdraw,
-} from '@/wallet/owner-actions';
+  addressSchema,
+  formatUsdc,
+  type ActivityPage,
+  type Address,
+  type GroundedAnswer,
+} from '@gol/protocol';
+import { getAddress } from 'viem';
+import { parseInstruction } from '@gol/agent/instruction';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import type { PublicConfig } from '@/config';
+import { createFixtureBackend } from '@/client/fixture-backend';
+import { createLiveBackend } from '@/client/live-backend';
+import { isTerminalStage, stageFromJournal } from '@/client/stages';
+import { INDEXING_BACKOFF_MS, isIndexed, type PendingActivity } from '@/client/timeline';
+import type {
+  AccountSnapshot,
+  AuthState,
+  GolBackend,
+  InstructionPreview,
+  MandateDraft,
+  OwnerActionKind,
+  PaymentStage,
+  TransactionState,
+} from '@/client/types';
+import { Dashboard, type DashboardProps, type TransferReview } from './Dashboard';
+import { deriveSteps } from './setup-steps';
 
-type AccountView = {
-  state: 'ready';
-  ownerAddress: Address;
-  accountAddress: Address;
-  agentAddress: Address;
-  balanceUnits: string;
-  activeMandateId: string;
-  mandate: null | {
-    perPaymentCapUnits: string;
-    cumulativeCapUnits: string;
-    spentUnits: string;
-    expiresAt: string;
-    revoked: boolean;
-  };
-};
+const SEVEN_DAYS_SECONDS = 7 * 24 * 60 * 60;
 
-const previewRecords: ActivityRecord[] = [
-  previewRecord('02', 'REFUSED', '70000000', '0', 'CUMULATIVE_CAP', '2020'),
-  previewRecord('01', 'EXECUTED', '40000000', '40000000', 'NONE', '1010'),
-];
-
-export function GolApp({ privyEnabled }: { privyEnabled: boolean }) {
-  return privyEnabled ? <LiveGolApp /> : <PreviewGolApp />;
+export function GolApp({ config }: { config: PublicConfig }) {
+  return config.mode === 'live' ? (
+    <LiveGolApp config={config} />
+  ) : (
+    <FixtureGolApp config={config} />
+  );
 }
 
-function LiveGolApp() {
+function LiveGolApp({ config }: { config: PublicConfig }) {
   const { ready, authenticated, login, logout, user, getAccessToken } = usePrivy();
   const { wallets } = useWallets();
-  const [account, setAccount] = useState<AccountView | null>(null);
-  const [accountState, setAccountState] = useState('Sign in to configure an account');
-  const [recipient, setRecipient] = useState('');
-  const [records, setRecords] = useState<ActivityRecord[]>([]);
-  const [freshness, setFreshness] = useState('unknown');
-  const [instruction, setInstruction] = useState('Pay 40 USDC to Design contractor');
-  const [runState, setRunState] = useState('Idle');
-  const [question, setQuestion] = useState('Why was the 70 USDC payment refused?');
-  const [answer, setAnswer] = useState('');
+  const walletsRef = useRef(wallets);
+  walletsRef.current = wallets;
+  const preferredRef = useRef<string | undefined>(undefined);
+  preferredRef.current = user?.wallet?.address;
 
   const authedFetch = useCallback(
     async (path: string, init: RequestInit = {}) => {
@@ -69,707 +66,593 @@ function LiveGolApp() {
     [getAccessToken],
   );
 
+  const backend = useMemo(
+    () =>
+      createLiveBackend({
+        config,
+        authedFetch,
+        ownerAddress: () => {
+          const preferred = preferredRef.current?.toLowerCase();
+          const wallet =
+            walletsRef.current.find((entry) => entry.address.toLowerCase() === preferred) ??
+            walletsRef.current[0];
+          return wallet ? (wallet.address as Address) : null;
+        },
+        ownerProvider: async () => {
+          const preferred = preferredRef.current?.toLowerCase();
+          const wallet =
+            walletsRef.current.find((entry) => entry.address.toLowerCase() === preferred) ??
+            walletsRef.current[0];
+          if (!wallet) throw new Error('An owner wallet is required.');
+          return wallet.getEthereumProvider();
+        },
+      }),
+    [config, authedFetch],
+  );
+
+  const auth: AuthState = {
+    ready,
+    authenticated,
+    label: authenticated ? 'Signed in' : 'Sign in with Privy',
+    login,
+    logout,
+  };
+  return (
+    <GolExperience
+      config={config}
+      auth={auth}
+      backend={backend}
+      enabled={ready && authenticated && wallets.length > 0}
+    />
+  );
+}
+
+function FixtureGolApp({ config }: { config: PublicConfig }) {
+  const backendRef = useRef<GolBackend | null>(null);
+  if (backendRef.current === null) backendRef.current = createFixtureBackend(config);
+  const [started, setStarted] = useState(false);
+  const auth: AuthState = {
+    ready: true,
+    authenticated: started,
+    label: started ? 'Fixture owner' : 'Start fixture walkthrough',
+    login: () => setStarted(true),
+    logout: () => setStarted(false),
+  };
+  return (
+    <GolExperience config={config} auth={auth} backend={backendRef.current} enabled={started} />
+  );
+}
+
+interface PaymentView {
+  stage: PaymentStage;
+  requestId: string | null;
+  txHash: string | null;
+  explorerUrl: string | null;
+  rule: string | null;
+  attemptedUnits: string | null;
+  headroomUnits: string | null;
+  detail: string;
+  warning: string | null;
+}
+
+const UNAVAILABLE_PAGE: ActivityPage = {
+  records: [],
+  cursor: null,
+  indexedBlock: null,
+  indexedBlockHash: null,
+  indexedAt: null,
+  chainHeadBlock: null,
+  hasIndexingErrors: null,
+  freshness: 'unavailable',
+  sourceDeployment: null,
+  partial: false,
+};
+
+const IDLE_PAYMENT: PaymentView = {
+  stage: 'idle',
+  requestId: null,
+  txHash: null,
+  explorerUrl: null,
+  rule: null,
+  attemptedUnits: null,
+  headroomUnits: null,
+  detail: '',
+  warning: null,
+};
+
+function GolExperience({
+  config,
+  auth,
+  backend,
+  enabled,
+}: {
+  config: PublicConfig;
+  auth: AuthState;
+  backend: GolBackend;
+  enabled: boolean;
+}) {
+  const [account, setAccount] = useState<AccountSnapshot | null>(null);
+  const [accountError, setAccountError] = useState<string | null>(null);
+  const [tx, setTx] = useState<TransactionState>({
+    kind: null,
+    phase: 'idle',
+    hash: null,
+    detail: '',
+  });
+  const [busy, setBusy] = useState<OwnerActionKind | null>(null);
+  const [recipientInput, setRecipientInput] = useState('');
+  const [consentOpen, setConsentOpen] = useState(false);
+  const [transferReview, setTransferReview] = useState<TransferReview | null>(null);
+  const [mandateReview, setMandateReview] = useState<MandateDraft | null>(null);
+
+  const [instruction, setInstruction] = useState(`Pay 40 USDC to ${config.recipientLabel}`);
+  const [preview, setPreview] = useState<InstructionPreview | null>(null);
+  const [payment, setPayment] = useState<PaymentView>(IDLE_PAYMENT);
+
+  const [page, setPage] = useState<ActivityPage | null>(null);
+  const [lastGoodPage, setLastGoodPage] = useState<ActivityPage | null>(null);
+  const [pending, setPending] = useState<PendingActivity[]>([]);
+  const [indexingWindowClosed, setIndexingWindowClosed] = useState(false);
+  const [checkingIndexing, setCheckingIndexing] = useState(false);
+
+  const [question, setQuestion] = useState('Why was the 70 USDC payment refused?');
+  const [answer, setAnswer] = useState<GroundedAnswer | null>(null);
+  const [asking, setAsking] = useState(false);
+
+  const accountRef = useRef<AccountSnapshot | null>(null);
+  accountRef.current = account;
+
   const refreshAccount = useCallback(async () => {
-    if (!authenticated) return;
-    try {
-      const value = await authedFetch('/api/account');
-      if (value.state === 'no_account') {
-        setAccount(null);
-        setAccountState('No GOL account linked');
-      } else {
-        setAccount(value as unknown as AccountView);
-        setAccountState('On-chain state verified');
-      }
-    } catch (error) {
-      setAccountState(errorMessage(error));
+    if (!enabled) {
+      setAccount(null);
+      return null;
     }
-  }, [authenticated, authedFetch]);
+    try {
+      const snapshot = await backend.loadAccount();
+      setAccount(snapshot);
+      setAccountError(null);
+      return snapshot;
+    } catch (error) {
+      setAccountError(message(error));
+      return accountRef.current;
+    }
+  }, [backend, enabled]);
 
   const refreshActivity = useCallback(
-    async (selected = account) => {
-      if (!selected) return;
+    async (address?: Address | null) => {
+      const target = address ?? accountRef.current?.accountAddress ?? null;
+      if (!target) return null;
       try {
-        const value = await authedFetch(
-          `/api/activity?account=${selected.accountAddress}&first=50`,
-        );
-        setRecords((value.records as ActivityRecord[]) ?? []);
-        setFreshness(String(value.freshness ?? 'unknown'));
-      } catch (error) {
-        setFreshness(`unavailable: ${errorMessage(error)}`);
+        const next = await backend.getActivity(target);
+        setPage(next);
+        if (next.freshness !== 'unavailable') setLastGoodPage(next);
+        setPending((current) => {
+          const remaining = current.filter((entry) => !isIndexed(next, entry));
+          // Keep the same array identity when nothing was indexed, so the bounded polling
+          // window is not restarted by its own refresh.
+          return remaining.length === current.length ? current : remaining;
+        });
+        return next;
+      } catch {
+        // A Graph failure never removes a confirmed on-chain result.
+        setPage(UNAVAILABLE_PAGE);
+        return null;
       }
     },
-    [account, authedFetch],
+    [backend],
   );
 
   useEffect(() => {
     void refreshAccount();
   }, [refreshAccount]);
+
+  const accountAddress = account?.accountAddress ?? null;
   useEffect(() => {
-    void refreshActivity();
-  }, [refreshActivity]);
+    void refreshActivity(accountAddress);
+  }, [refreshActivity, accountAddress]);
+
+  // Bounded automatic indexing window. The overlay is retained after it closes.
   useEffect(() => {
-    if (!authenticated || !account) return;
-    const requestId = window.localStorage.getItem(pendingRequestKey(account.accountAddress));
-    if (!requestId) return;
-    setRunState('Recovering pending request from durable journal');
-    void pollRequest(requestId, account);
-  }, [authenticated, account, authedFetch]);
-
-  async function pollRequest(requestId: string, selected: AccountView) {
-    for (let attempt = 0; attempt < 30; attempt += 1) {
-      await pause(2_000);
-      const result = await authedFetch(`/api/requests/${requestId}`);
-      const state = String(result.state);
-      setRunState(paymentLabel(state, result));
-      if (
-        [
-          'needs_clarification',
-          'executed',
-          'refused',
-          'signer_blocked',
-          'technical_failure',
-          'unknown',
-        ].includes(state)
-      ) {
-        window.localStorage.removeItem(pendingRequestKey(selected.accountAddress));
-        await Promise.all([refreshAccount(), refreshActivity(selected)]);
-        return;
+    if (pending.length === 0 || !accountAddress) return;
+    let cancelled = false;
+    setIndexingWindowClosed(false);
+    (async () => {
+      for (const delay of INDEXING_BACKOFF_MS) {
+        await pause(delay);
+        if (cancelled) return;
+        const next = await refreshActivity(accountAddress);
+        if (!next) continue;
+        if (pending.every((entry) => isIndexed(next, entry))) return;
       }
-    }
-    setRunState('Still pending. This request will recover after refresh.');
-  }
+      if (!cancelled) setIndexingWindowClosed(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pending, accountAddress, refreshActivity]);
 
-  async function ownerProvider() {
-    const preferred =
-      wallets.find(
-        (wallet) => wallet.address.toLowerCase() === user?.wallet?.address?.toLowerCase(),
-      ) ?? wallets[0];
-    if (!preferred) throw new Error('OWNER_WALLET_REQUIRED');
-    return preferred.getEthereumProvider();
-  }
-
-  async function configure() {
-    try {
-      const approved = addressSchema.parse(recipient);
-      const provider = await ownerProvider();
-      let selected = account;
-      if (!selected) {
-        const factory = addressSchema.parse(process.env.NEXT_PUBLIC_FACTORY_ADDRESS ?? '');
-        setAccountState('Waiting for owner account signature');
-        const created = await createAccount(provider, factory);
-        setAccountState('Creating restricted agent wallet');
-        const setup = await authedFetch('/api/agent/setup', {
-          method: 'POST',
-          body: JSON.stringify({
-            account: created.account,
-            ownerAddress: created.owner,
-            recipient: approved,
-            recipientLabel: 'Design contractor',
-            consent: true,
-          }),
-        });
-        selected = {
-          state: 'ready',
-          ownerAddress: created.owner,
-          accountAddress: created.account,
-          agentAddress: setup.agentAddress as Address,
-          balanceUnits: '0',
-          activeMandateId: '0',
-          mandate: null,
-        };
-      }
-      const chain = await readAccount(selected.accountAddress);
-      const target = 100_000_000n;
-      if (chain.balance < target) {
-        setAccountState(
-          `Confirm funding ${formatUsdc(target - chain.balance)} USDC to ${selected.accountAddress}`,
-        );
-        await fundAccount(provider, selected.accountAddress, target - chain.balance);
-      }
-      const expiresAt = BigInt(Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60);
-      if (
-        !window.confirm(
-          `Create mandate?\nAccount: ${selected.accountAddress}\nAgent: ${selected.agentAddress}\nPer payment: 100 USDC\nCumulative: 100 USDC\nExpires: ${new Date(Number(expiresAt) * 1000).toISOString()}\nRecipient: ${approved}`,
-        )
-      )
-        throw new Error('OWNER_CANCELLED');
-      setAccountState('Waiting for owner mandate signature');
-      await createMandate(provider, selected.accountAddress, {
-        agent: selected.agentAddress,
-        perPaymentCap: target,
-        cumulativeCap: target,
-        expiresAt,
-        recipients: [approved],
-      });
-      setAccountState('Mandate confirmed on Arc testnet');
-      await refreshAccount();
-    } catch (error) {
-      setAccountState(errorMessage(error));
-    }
-  }
-
-  async function runAgent(event: FormEvent) {
-    event.preventDefault();
-    if (!account || account.activeMandateId === '0')
-      return setRunState('Create an active mandate first');
-    try {
-      const requestId = randomRequestId();
-      window.localStorage.setItem(pendingRequestKey(account.accountAddress), requestId);
-      setRunState('Queued in durable payment journal');
-      await authedFetch('/api/instructions', {
-        method: 'POST',
-        body: JSON.stringify({
-          account: account.accountAddress,
-          mandateId: account.activeMandateId,
+  const pollRequest = useCallback(
+    async (requestId: string) => {
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        let snapshot;
+        try {
+          snapshot = await backend.getRequest(requestId);
+        } catch (error) {
+          // Keep the last confirmed view. A failed poll is not a payment outcome.
+          setPayment((current) => ({ ...current, warning: message(error) }));
+          await pause(2_000);
+          continue;
+        }
+        const stage = stageFromJournal(snapshot.state);
+        setPayment({
+          stage,
           requestId,
-          text: instruction,
-        }),
-      });
-      await pollRequest(requestId, account);
-    } catch (error) {
-      setRunState(errorMessage(error));
-    }
-  }
-
-  async function ask(event: FormEvent) {
-    event.preventDefault();
-    if (!account) return setAnswer('No linked account is available.');
-    try {
-      const result = await authedFetch('/api/questions', {
-        method: 'POST',
-        body: JSON.stringify({ account: account.accountAddress, question }),
-      });
-      setAnswer(String(result.text ?? 'No answer is available.'));
-    } catch (error) {
-      setAnswer(`Indexed evidence unavailable: ${errorMessage(error)}`);
-    }
-  }
-
-  async function revoke() {
-    if (
-      !account ||
-      account.activeMandateId === '0' ||
-      !window.confirm(`Revoke mandate #${account.activeMandateId} on ${account.accountAddress}?`)
-    )
-      return;
-    try {
-      setAccountState('Waiting for owner revoke signature');
-      await revokeMandate(
-        await ownerProvider(),
-        account.accountAddress,
-        BigInt(account.activeMandateId),
-      );
-      await refreshAccount();
-    } catch (error) {
-      setAccountState(errorMessage(error));
-    }
-  }
-
-  async function withdrawAll() {
-    if (
-      !account ||
-      BigInt(account.balanceUnits) === 0n ||
-      !window.confirm(
-        `Withdraw ${formatUsdc(account.balanceUnits)} USDC from ${account.accountAddress} to immutable owner ${account.ownerAddress}?`,
-      )
-    )
-      return;
-    try {
-      setAccountState('Waiting for owner withdrawal signature');
-      await withdraw(await ownerProvider(), account.accountAddress, BigInt(account.balanceUnits));
-      await refreshAccount();
-    } catch (error) {
-      setAccountState(errorMessage(error));
-    }
-  }
-
-  return (
-    <Dashboard
-      auth={{
-        ready,
-        authenticated,
-        login,
-        logout,
-        label: user?.wallet?.address?.slice(0, 10) ?? 'Signed in',
-      }}
-      account={account}
-      accountState={accountState}
-      recipient={recipient}
-      setRecipient={setRecipient}
-      configure={() => void configure()}
-      instruction={instruction}
-      setInstruction={setInstruction}
-      runAgent={runAgent}
-      runState={runState}
-      records={records}
-      freshness={freshness}
-      question={question}
-      setQuestion={setQuestion}
-      ask={ask}
-      answer={answer}
-      revoke={() => void revoke()}
-      withdraw={() => void withdrawAll()}
-    />
-  );
-}
-
-function PreviewGolApp() {
-  const [loaded, setLoaded] = useState(false);
-  const [records, setRecords] = useState<ActivityRecord[]>([]);
-  const [instruction, setInstruction] = useState('Pay 40 USDC to Design contractor');
-  const [runState, setRunState] = useState('Local preview only. No transaction will be submitted.');
-  const [question, setQuestion] = useState('Why was the 70 USDC payment refused?');
-  const [answer, setAnswer] = useState('');
-  function run(event: FormEvent) {
-    event.preventDefault();
-    const refusal = /\b70(?:\.0+)?\b/.test(instruction);
-    const next = refusal ? previewRecords[0]! : previewRecords[1]!;
-    setRecords((current) => [next, ...current.filter((row) => row.requestId !== next.requestId)]);
-    setRunState(
-      refusal
-        ? 'Preview: policy refused on-chain fixture'
-        : 'Preview: payment executed on-chain fixture',
-    );
-  }
-  function ask(event: FormEvent) {
-    event.preventDefault();
-    setAnswer(
-      records.some((row) => row.outcome === 'REFUSED')
-        ? '70 USDC was refused because only 60 USDC remained after the 40 USDC payment.'
-        : 'Load the acceptance fixture to inspect a refusal.',
-    );
-  }
-  return (
-    <Dashboard
-      auth={{
-        ready: true,
-        authenticated: false,
-        login: () => undefined,
-        logout: () => undefined,
-        label: 'Local preview',
-      }}
-      account={loaded ? previewAccount : null}
-      accountState={
-        loaded
-          ? 'Local fixture loaded. No chain read was performed'
-          : 'Set NEXT_PUBLIC_PRIVY_APP_ID to enable authenticated owner actions'
+          txHash: snapshot.txHash,
+          explorerUrl: snapshot.explorerUrl,
+          rule: snapshot.rule,
+          attemptedUnits: snapshot.attemptedUnits,
+          headroomUnits: snapshot.headroomUnits,
+          detail: snapshot.errorCode ?? '',
+          warning: null,
+        });
+        if (isTerminalStage(stage)) {
+          const linked = accountRef.current?.accountAddress;
+          if (linked) window.localStorage.removeItem(pendingRequestKey(linked));
+          if ((stage === 'executed' || stage === 'refused') && snapshot.txHash) {
+            const overlay: PendingActivity = {
+              requestId,
+              txHash: snapshot.txHash,
+              outcome: stage === 'executed' ? 'EXECUTED' : 'REFUSED',
+              rule: snapshot.rule ?? (stage === 'executed' ? 'NONE' : 'CUMULATIVE_CAP'),
+              mandateId: snapshot.mandateId,
+              recipient: snapshot.recipient ?? '',
+              attempted: snapshot.attemptedUnits ?? '0',
+              transferred: stage === 'executed' ? (snapshot.attemptedUnits ?? '0') : '0',
+              headroom: snapshot.headroomUnits ?? '0',
+              spentAfter: '0',
+              confirmedAt: Date.now(),
+            };
+            setPending((current) =>
+              current.some((entry) => entry.requestId === overlay.requestId)
+                ? current
+                : [overlay, ...current],
+            );
+          }
+          const refreshed = await refreshAccount();
+          await refreshActivity(refreshed?.accountAddress ?? accountRef.current?.accountAddress);
+          return;
+        }
+        await pause(2_000);
       }
-      recipient=""
-      setRecipient={() => undefined}
-      configure={() => {
-        setLoaded(true);
-        setRecords(previewRecords);
-      }}
-      instruction={instruction}
-      setInstruction={setInstruction}
-      runAgent={run}
-      runState={runState}
-      records={records}
-      freshness="fixture, not live"
-      question={question}
-      setQuestion={setQuestion}
-      ask={ask}
-      answer={answer}
-      revoke={() => setRunState('Preview: owner revoke requires a wallet')}
-      withdraw={() => setRunState('Preview: owner withdrawal requires a wallet')}
-    />
+      setPayment((current) => ({
+        ...current,
+        warning: 'Still pending. This request recovers after a refresh.',
+      }));
+    },
+    [backend, refreshAccount, refreshActivity],
   );
-}
 
-const previewAccount: AccountView = {
-  state: 'ready',
-  ownerAddress: `0x${'c'.repeat(40)}`,
-  accountAddress: `0x${'d'.repeat(40)}`,
-  agentAddress: `0x${'a'.repeat(40)}`,
-  balanceUnits: '60000000',
-  activeMandateId: '1',
-  mandate: {
-    perPaymentCapUnits: '100000000',
-    cumulativeCapUnits: '100000000',
-    spentUnits: '40000000',
-    expiresAt: String(Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60),
-    revoked: false,
-  },
-};
+  // Recover a non-terminal request after a reload.
+  const recoveredRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!enabled || !accountAddress) return;
+    const stored = window.localStorage.getItem(pendingRequestKey(accountAddress));
+    if (!stored || recoveredRef.current === stored) return;
+    recoveredRef.current = stored;
+    setPayment({ ...IDLE_PAYMENT, stage: 'queued', requestId: stored });
+    void pollRequest(stored);
+  }, [enabled, accountAddress, pollRequest]);
 
-type DashboardProps = {
-  auth: {
-    ready: boolean;
-    authenticated: boolean;
-    login: () => unknown;
-    logout: () => unknown;
-    label: string;
+  const report = useCallback(
+    (kind: OwnerActionKind) =>
+      (update: { phase: TransactionState['phase']; hash?: string | null; detail?: string }) => {
+        setTx((current) => ({
+          kind,
+          phase: update.phase,
+          hash: update.hash ?? (update.phase === 'awaiting_signature' ? null : current.hash),
+          detail: update.detail ?? '',
+        }));
+      },
+    [],
+  );
+
+  const runOwnerAction = useCallback(
+    async (kind: OwnerActionKind, work: (reporter: ReturnType<typeof report>) => Promise<void>) => {
+      if (busy) return;
+      setBusy(kind);
+      setTx({ kind, phase: 'awaiting_signature', hash: null, detail: '' });
+      try {
+        await work(report(kind));
+      } catch (error) {
+        setTx((current) => ({
+          kind,
+          phase: current.phase === 'awaiting_signature' ? 'failed' : current.phase,
+          hash: current.hash,
+          detail: message(error),
+        }));
+      } finally {
+        setBusy(null);
+        await refreshAccount();
+      }
+    },
+    [busy, report, refreshAccount],
+  );
+
+  const steps = useMemo(
+    () => deriveSteps({ config, authenticated: auth.authenticated && enabled, account }),
+    [config, auth.authenticated, enabled, account],
+  );
+
+  async function onCreateAccount() {
+    await runOwnerAction('create_account', async (reporter) => backend.createAccount(reporter));
+  }
+
+  async function onProvisionAgent() {
+    const parsed = addressSchema.safeParse(normalizeAddress(recipientInput));
+    const current = accountRef.current;
+    if (!parsed.success || !current?.accountAddress) {
+      setTx({
+        kind: 'provision_agent',
+        phase: 'failed',
+        hash: null,
+        detail: 'Enter the approved recipient address before provisioning the agent wallet.',
+      });
+      return;
+    }
+    setConsentOpen(false);
+    await runOwnerAction('provision_agent', async () => {
+      await backend.provisionAgent(
+        current.accountAddress!,
+        current.ownerAddress,
+        parsed.data,
+        config.recipientLabel,
+      );
+    });
+  }
+
+  function onReviewAgentGas() {
+    const current = accountRef.current;
+    if (!current?.agentAddress) return;
+    setTransferReview({
+      kind: 'fund_agent_gas',
+      title: 'Top up the agent gas reserve',
+      destination: current.agentAddress,
+      destinationLabel: 'Agent wallet',
+      amountUnits: config.agentGasTopUpUnits,
+      note: 'This transfer is outside the mandate’s account budget. It only lets the agent wallet pay its own gas.',
+    });
+  }
+
+  function onReviewAccountFunding() {
+    const current = accountRef.current;
+    if (!current?.accountAddress) return;
+    const target = BigInt(config.accountTargetUnits);
+    const held = BigInt(current.balances.accountUsdcUnits);
+    if (held >= target) return;
+    setTransferReview({
+      kind: 'fund_account',
+      title: 'Fund the GOL account',
+      destination: current.accountAddress,
+      destinationLabel: 'GOL account',
+      amountUnits: (target - held).toString(),
+      note: `Only the difference needed to reach the ${formatUsdc(target)} USDC demonstration balance is transferred.`,
+    });
+  }
+
+  async function onConfirmTransfer() {
+    const current = accountRef.current;
+    const review = transferReview;
+    if (!current || !review) return;
+    setTransferReview(null);
+    const units = BigInt(review.amountUnits);
+    await runOwnerAction(review.kind, async (reporter) =>
+      review.kind === 'fund_agent_gas'
+        ? backend.fundAgentGas(review.destination as Address, units, reporter)
+        : backend.fundAccount(review.destination as Address, units, reporter),
+    );
+  }
+
+  function onReviewMandate() {
+    const current = accountRef.current;
+    const recipient = current?.recipients[0];
+    if (!current?.agentAddress || !recipient) return;
+    setMandateReview({
+      agent: current.agentAddress,
+      recipient: recipient.address,
+      recipientLabel: recipient.label,
+      perPaymentCapUnits: config.accountTargetUnits,
+      cumulativeCapUnits: config.accountTargetUnits,
+      expiresAt: String(Math.floor(Date.now() / 1_000) + SEVEN_DAYS_SECONDS),
+    });
+  }
+
+  async function onSignMandate() {
+    const current = accountRef.current;
+    const draft = mandateReview;
+    if (!current?.accountAddress || !draft) return;
+    setMandateReview(null);
+    await runOwnerAction('sign_mandate', async (reporter) =>
+      backend.signMandate(current.accountAddress!, draft, reporter),
+    );
+  }
+
+  async function onRevoke() {
+    const current = accountRef.current;
+    if (!current?.accountAddress || current.activeMandateId === '0') return;
+    await runOwnerAction('revoke_mandate', async (reporter) =>
+      backend.revokeMandate(current.accountAddress!, current.activeMandateId, reporter),
+    );
+  }
+
+  async function onWithdraw() {
+    const current = accountRef.current;
+    if (!current?.accountAddress) return;
+    const units = BigInt(current.balances.accountUsdcUnits);
+    if (units === 0n) return;
+    await runOwnerAction('withdraw', async (reporter) =>
+      backend.withdraw(current.accountAddress!, units, reporter),
+    );
+  }
+
+  async function onPreview(event: FormEvent) {
+    event.preventDefault();
+    const current = accountRef.current;
+    if (!current?.accountAddress || current.activeMandateId === '0') {
+      setPayment({
+        ...IDLE_PAYMENT,
+        stage: 'needs_clarification',
+        detail: 'Complete the setup checklist before running the agent.',
+      });
+      return;
+    }
+    setPayment({ ...IDLE_PAYMENT, stage: 'parsing' });
+    const parsed = await parseInstruction(instruction, current.recipients);
+    if (parsed.kind === 'clarification') {
+      setPreview(null);
+      setPayment({ ...IDLE_PAYMENT, stage: 'needs_clarification', detail: parsed.message });
+      return;
+    }
+    const label =
+      current.recipients.find(
+        (entry) => entry.address.toLowerCase() === parsed.intent.recipient.toLowerCase(),
+      )?.label ?? config.recipientLabel;
+    setPreview({
+      requestId: randomRequestId(),
+      amountUsdc: parsed.intent.amountUsdc,
+      recipient: parsed.intent.recipient,
+      recipientLabel: label,
+      mandateId: current.activeMandateId,
+    });
+    setPayment(IDLE_PAYMENT);
+  }
+
+  async function onSubmitInstruction() {
+    const current = accountRef.current;
+    const resolved = preview;
+    if (!current?.accountAddress || !resolved) return;
+    setPreview(null);
+    setPayment({ ...IDLE_PAYMENT, stage: 'queued', requestId: resolved.requestId });
+    try {
+      window.localStorage.setItem(pendingRequestKey(current.accountAddress), resolved.requestId);
+      await backend.submitInstruction(
+        current.accountAddress,
+        resolved.requestId,
+        instruction,
+        resolved.mandateId,
+      );
+      await pollRequest(resolved.requestId);
+    } catch (error) {
+      setPayment((currentView) => ({
+        ...currentView,
+        stage: 'unknown',
+        detail: message(error),
+      }));
+    }
+  }
+
+  async function onAsk(event: FormEvent) {
+    event.preventDefault();
+    const current = accountRef.current;
+    if (!current?.accountAddress) return;
+    setAsking(true);
+    try {
+      // Asking never refreshes the timeline away, enqueues work, or reaches the signer.
+      setAnswer(await backend.ask(current.accountAddress, question));
+    } catch (error) {
+      setAnswer({
+        status: 'unavailable',
+        text: `Indexed evidence unavailable: ${message(error)}`,
+        citations: [],
+        indexedBlock: null,
+        indexedAt: null,
+        sourceDeployment: null,
+        freshness: 'unavailable',
+        recordCount: 0,
+        partial: false,
+        deterministic: true,
+      });
+    } finally {
+      setAsking(false);
+    }
+  }
+
+  async function onCheckIndexing() {
+    setCheckingIndexing(true);
+    try {
+      await refreshActivity(accountRef.current?.accountAddress);
+    } finally {
+      setCheckingIndexing(false);
+    }
+  }
+
+  const props: DashboardProps = {
+    config,
+    auth,
+    account,
+    accountError,
+    steps,
+    tx,
+    busy,
+    recipientInput,
+    setRecipientInput,
+    consentOpen,
+    setConsentOpen,
+    mandateReview,
+    setMandateReview,
+    onCreateAccount: () => void onCreateAccount(),
+    onProvisionAgent: () => void onProvisionAgent(),
+    onReviewAgentGas,
+    onReviewAccountFunding,
+    transferReview,
+    setTransferReview,
+    onConfirmTransfer: () => void onConfirmTransfer(),
+    onReviewMandate,
+    onSignMandate: () => void onSignMandate(),
+    onRevoke: () => void onRevoke(),
+    onWithdraw: () => void onWithdraw(),
+    instruction,
+    setInstruction,
+    preview,
+    onPreview: (event) => void onPreview(event),
+    onSubmitInstruction: () => void onSubmitInstruction(),
+    onCancelPreview: () => setPreview(null),
+    payment,
+    page,
+    lastGoodPage,
+    pending,
+    indexingWindowClosed,
+    checkingIndexing,
+    onCheckIndexing: () => void onCheckIndexing(),
+    question,
+    setQuestion,
+    onAsk: (event) => void onAsk(event),
+    answer,
+    asking,
   };
-  account: AccountView | null;
-  accountState: string;
-  recipient: string;
-  setRecipient: (value: string) => void;
-  configure: () => void;
-  instruction: string;
-  setInstruction: (value: string) => void;
-  runAgent: (event: FormEvent) => void;
-  runState: string;
-  records: ActivityRecord[];
-  freshness: string;
-  question: string;
-  setQuestion: (value: string) => void;
-  ask: (event: FormEvent) => void;
-  answer: string;
-  revoke: () => void;
-  withdraw: () => void;
-};
-
-function Dashboard(props: DashboardProps) {
-  const [filter, setFilter] = useState<'ALL' | 'EXECUTED' | 'REFUSED'>('ALL');
-  const mandate = props.account?.mandate;
-  const spent = mandate?.spentUnits ?? '40000000';
-  const cap = mandate?.cumulativeCapUnits ?? '100000000';
-  const remaining = BigInt(cap) - BigInt(spent);
-  const visible = useMemo(
-    () => props.records.filter((row) => filter === 'ALL' || row.outcome === filter),
-    [filter, props.records],
-  );
-  return (
-    <main>
-      <header className="topbar">
-        <a className="brand" href="#top">
-          <span className="brand-mark">G</span>
-          <span>GOL</span>
-        </a>
-        <div className="top-actions">
-          <span className="network">
-            <i /> Arc testnet
-          </span>
-          {!props.auth.ready ? (
-            <button className="ghost" disabled>
-              Initializing
-            </button>
-          ) : props.auth.authenticated ? (
-            <button className="ghost" onClick={() => props.auth.logout()}>
-              {props.auth.label} · Sign out
-            </button>
-          ) : (
-            <button className="ghost" onClick={() => props.auth.login()}>
-              {props.auth.label === 'Local preview' ? props.auth.label : 'Sign in with Privy'}
-            </button>
-          )}
-        </div>
-      </header>
-      <section className="hero" id="top">
-        <div>
-          <p className="eyebrow">CONTROLLED AGENT PAYMENTS</p>
-          <h1>
-            Give the agent a budget.
-            <br />
-            <em>Keep the authority.</em>
-          </h1>
-          <p className="lede">
-            A USDC account that pays approved contractors, refuses policy breaches on-chain, and
-            explains every outcome with indexed evidence.
-          </p>
-        </div>
-        <div className="hero-proof">
-          <div>
-            <span>Mandate</span>
-            <strong>
-              {props.account?.activeMandateId === '0'
-                ? 'Not active'
-                : `#${props.account?.activeMandateId ?? '1'} active`}
-            </strong>
-          </div>
-          <div>
-            <span>Spent</span>
-            <strong>{formatUsdc(spent)} USDC</strong>
-          </div>
-          <div>
-            <span>Remaining</span>
-            <strong className="coral">{formatUsdc(remaining)} USDC</strong>
-          </div>
-        </div>
-      </section>
-      <section className="grid primary-grid">
-        <article className="panel mandate-panel">
-          <div className="panel-heading">
-            <div>
-              <p className="kicker">OWNER CONTROL</p>
-              <h2>{mandate ? 'Active mandate' : 'Set up account'}</h2>
-            </div>
-            <span className={`status ${mandate && !mandate.revoked ? 'active' : 'refused'}`}>
-              {mandate && !mandate.revoked ? 'Active' : 'Setup required'}
-            </span>
-          </div>
-          <div className="budget-ring">
-            <div>
-              <small>AVAILABLE</small>
-              <strong>{formatUsdc(remaining)}</strong>
-              <span>USDC</span>
-            </div>
-          </div>
-          <div className="metrics">
-            <div>
-              <span>Per payment</span>
-              <strong>{formatUsdc(mandate?.perPaymentCapUnits ?? cap)} USDC</strong>
-            </div>
-            <div>
-              <span>Cumulative</span>
-              <strong>{formatUsdc(cap)} USDC</strong>
-            </div>
-            <div>
-              <span>Expires</span>
-              <strong>
-                {mandate
-                  ? new Date(Number(mandate.expiresAt) * 1000).toLocaleDateString()
-                  : '7 days after setup'}
-              </strong>
-            </div>
-          </div>
-          {!mandate && (
-            <>
-              <label htmlFor="recipient">Approved recipient</label>
-              <input
-                id="recipient"
-                className="setup-input"
-                placeholder="0x contractor address"
-                value={props.recipient}
-                onChange={(event) => props.setRecipient(event.target.value)}
-              />
-              <button className="primary setup-button" onClick={props.configure}>
-                {props.auth.authenticated
-                  ? 'Create account and 100 USDC mandate'
-                  : 'Load acceptance fixture'}{' '}
-                <span>→</span>
-              </button>
-            </>
-          )}
-          {props.account && (
-            <div className="identity-row">
-              <div>
-                <span>GOL account</span>
-                <strong>{short(props.account.accountAddress)}</strong>
-                <code>Agent {short(props.account.agentAddress)}</code>
-              </div>
-              <span className="verified">CHAIN VERIFIED</span>
-            </div>
-          )}
-          <div className="owner-actions">
-            <button className="secondary" onClick={props.revoke} disabled={!mandate}>
-              Review revoke
-            </button>
-            <button className="secondary" onClick={props.withdraw} disabled={!props.account}>
-              Withdraw
-            </button>
-          </div>
-          <p className="hint">
-            {props.accountState}. Owner actions always require the owner wallet.
-          </p>
-        </article>
-        <article className="panel agent-panel">
-          <div className="panel-heading">
-            <div>
-              <p className="kicker">AGENT RUNNER</p>
-              <h2>Make a payment</h2>
-            </div>
-            <span className="agent-dot">Restricted signer</span>
-          </div>
-          <form onSubmit={props.runAgent}>
-            <label htmlFor="instruction">Instruction</label>
-            <textarea
-              id="instruction"
-              value={props.instruction}
-              onChange={(event) => props.setInstruction(event.target.value)}
-              maxLength={2000}
-            />
-            <div className="examples">
-              <button
-                type="button"
-                onClick={() => props.setInstruction('Pay 40 USDC to Design contractor')}
-              >
-                40 USDC
-              </button>
-              <button
-                type="button"
-                onClick={() => props.setInstruction('Pay 70 USDC to Design contractor')}
-              >
-                70 USDC
-              </button>
-            </div>
-            <button className="primary" type="submit">
-              Run agent <span>→</span>
-            </button>
-          </form>
-          <div className="run-state" role="status">
-            <i /> {props.runState}
-          </div>
-        </article>
-      </section>
-      <section className="grid evidence-grid">
-        <article className="panel timeline-panel">
-          <div className="panel-heading timeline-heading">
-            <div>
-              <p className="kicker">THE GRAPH</p>
-              <h2>Indexed activity</h2>
-            </div>
-            <div className="filters">
-              {(['ALL', 'EXECUTED', 'REFUSED'] as const).map((value) => (
-                <button
-                  key={value}
-                  className={filter === value ? 'selected' : ''}
-                  onClick={() => setFilter(value)}
-                >
-                  {value}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="freshness">
-            <i /> {props.freshness}
-            <span>Indexed source</span>
-          </div>
-          {visible.length === 0 ? (
-            <div className="empty">
-              <strong>No activity loaded</strong>
-              <span>Run an instruction after setup.</span>
-            </div>
-          ) : (
-            <ol className="timeline">
-              {visible.map((row) => (
-                <li key={row.actionId}>
-                  <span className={`event-icon ${row.outcome.toLowerCase()}`}>
-                    {row.outcome === 'EXECUTED' ? '✓' : '!'}
-                  </span>
-                  <div className="event-main">
-                    <div>
-                      <strong>{formatUsdc(row.attempted)} USDC</strong>
-                      <span className={`status ${row.outcome.toLowerCase()}`}>{row.outcome}</span>
-                    </div>
-                    <p>{row.outcome === 'REFUSED' ? row.reason : `Paid ${short(row.recipient)}`}</p>
-                    <small>
-                      Request {short(row.requestId)} · Mandate #{row.mandateId} ·{' '}
-                      <a
-                        href={`https://testnet.arcscan.app/tx/${row.transactionHash}`}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        evidence ↗
-                      </a>
-                    </small>
-                  </div>
-                  <div className="headroom">
-                    <span>HEADROOM</span>
-                    <strong>{formatUsdc(row.headroom)}</strong>
-                    <small>USDC</small>
-                  </div>
-                </li>
-              ))}
-            </ol>
-          )}
-        </article>
-        <article className="panel question-panel">
-          <div className="panel-heading">
-            <div>
-              <p className="kicker">READ-ONLY QUESTIONS</p>
-              <h2>Ask the record</h2>
-            </div>
-            <span className="lock">◇ No signing access</span>
-          </div>
-          <form onSubmit={props.ask}>
-            <label htmlFor="question">Question about indexed activity</label>
-            <div className="question-input">
-              <input
-                id="question"
-                value={props.question}
-                onChange={(event) => props.setQuestion(event.target.value)}
-                maxLength={1000}
-              />
-              <button type="submit" aria-label="Ask question">
-                →
-              </button>
-            </div>
-          </form>
-          {props.answer ? (
-            <div className="answer" role="status">
-              <span className="answer-label">GROUNDED ANSWER</span>
-              <p>{props.answer}</p>
-            </div>
-          ) : (
-            <div className="question-empty">
-              <span>?</span>
-              <p>
-                Answers use indexed events only.
-                <br />
-                They cannot initiate a payment.
-              </p>
-            </div>
-          )}
-        </article>
-      </section>
-      <footer>
-        <span>GOL · ARC TESTNET ONLY</span>
-        <span>USDC payments · Contract-enforced policy · Indexed evidence</span>
-      </footer>
-    </main>
-  );
+  return <Dashboard {...props} />;
 }
 
-function previewRecord(
-  id: string,
-  outcome: 'EXECUTED' | 'REFUSED',
-  attempted: string,
-  transferred: string,
-  rule: string,
-  tx: string,
-): ActivityRecord {
-  return {
-    actionId: `0x${id}` as `0x${string}`,
-    requestId: `0x${id.padStart(64, '0')}`,
-    mandateId: '1',
-    agent: `0x${'a'.repeat(40)}`,
-    recipient: `0x${'b'.repeat(40)}`,
-    outcome,
-    rule,
-    reason: outcome === 'REFUSED' ? 'Cumulative cap exceeded' : '',
-    attempted,
-    transferred,
-    headroom: '60000000',
-    spentAfter: '40000000',
-    sequence: id === '01' ? '1' : '2',
-    transactionHash: `0x${tx.padEnd(64, '0')}`,
-    blockNumber: '61061383',
-    blockHash: `0x${'c'.repeat(64)}`,
-    timestamp: '1788864000',
-    logIndex: '0',
-  };
-}
+export type { PaymentView };
 
-function formatUsdc(value: string | bigint) {
-  const units = BigInt(value);
-  const whole = units / 1_000_000n;
-  const fraction = (units % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '');
-  return fraction ? `${whole}.${fraction}` : whole.toString();
-}
-function short(value: string) {
-  return value.length > 14 ? `${value.slice(0, 8)}...${value.slice(-4)}` : value;
-}
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : 'Unexpected failure';
-}
-function pause(milliseconds: number) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+/** Accepts an address in any case and returns its checksummed form for validation. */
+function normalizeAddress(value: string): string {
+  const trimmed = value.trim();
+  return /^0x[0-9a-fA-F]{40}$/.test(trimmed) ? getAddress(trimmed) : trimmed;
 }
 
 function pendingRequestKey(account: string) {
   return `gol:pending:${account.toLowerCase()}`;
 }
+
 function randomRequestId() {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   return `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
 }
-function paymentLabel(state: string, value: Record<string, unknown>) {
-  if (state === 'refused') return `Policy refused on-chain: ${String(value.rule ?? 'policy rule')}`;
-  if (state === 'executed') return `Payment executed on-chain: ${String(value.txHash ?? '')}`;
-  if (state === 'signer_blocked') return 'Signer blocked before submission';
-  if (state === 'technical_failure')
-    return `Technical transaction failure: ${String(value.errorCode ?? '')}`;
-  if (state === 'needs_clarification') return 'Needs clarification. No transaction submitted.';
-  return `${state[0]?.toUpperCase() ?? ''}${state.slice(1)}`;
+
+function message(error: unknown) {
+  return error instanceof Error ? error.message : 'Unexpected failure';
+}
+
+function pause(milliseconds: number) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }

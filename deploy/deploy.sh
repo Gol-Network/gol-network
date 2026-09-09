@@ -2,20 +2,74 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
-test -f .env.production || { echo '.env.production is required' >&2; exit 1; }
-test -n "${RELEASE_COMMIT:-}" || { echo 'RELEASE_COMMIT is required' >&2; exit 1; }
-test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT" || { echo 'checkout does not match RELEASE_COMMIT' >&2; exit 1; }
+env_file=.env.production
+test -f "$env_file" || { echo "$env_file is required" >&2; exit 1; }
 
-if docker compose ps --status running worker | grep -q worker; then
-  docker compose stop -t 45 worker
+# Record the exact source commit that produced this release, or refuse to guess one.
+if [ -z "${RELEASE_COMMIT:-}" ]; then
+  echo 'RELEASE_COMMIT is required' >&2
+  exit 1
 fi
-if docker compose ps --status running postgres | grep -q postgres; then
+test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT" || {
+  echo 'checkout does not match RELEASE_COMMIT' >&2
+  exit 1
+}
+if [ -n "$(git status --porcelain)" ]; then
+  if [ "${ALLOW_DIRTY_TREE:-0}" != "1" ]; then
+    echo 'source tree is not clean; commit changes or set ALLOW_DIRTY_TREE=1 deliberately' >&2
+    exit 1
+  fi
+  echo "warning: deploying a dirty tree at $RELEASE_COMMIT" >&2
+fi
+
+# Fail before touching the host when required runtime configuration is absent.
+required=(
+  DOMAIN
+  APP_ORIGIN
+  POSTGRES_ADMIN_PASSWORD
+  POSTGRES_RUNTIME_PASSWORD
+  ARC_RPC_URL
+  GRAPH_QUERY_URL
+  PRIVY_APP_ID
+  PRIVY_APP_SECRET
+  PRIVY_VERIFICATION_KEY
+  PRIVY_AUTHORIZATION_KEY_ID
+  PRIVY_AUTHORIZATION_PRIVATE_KEY
+  OPENAI_API_KEY
+  FACTORY_ADDRESS
+)
+missing=()
+for name in "${required[@]}"; do
+  value="$(grep -E "^${name}=" "$env_file" | tail -n 1 | cut -d= -f2- || true)"
+  if [ -z "$value" ]; then missing+=("$name"); fi
+done
+if [ "${#missing[@]}" -gt 0 ]; then
+  # Field names only. A configuration value may itself be a secret.
+  echo "missing required runtime configuration: ${missing[*]}" >&2
+  exit 1
+fi
+
+compose() { docker compose --env-file "$env_file" "$@"; }
+
+# The images pin Node 22; refuse to build with anything else installed as the local default.
+if command -v node >/dev/null 2>&1; then
+  case "$(node --version)" in
+    v22.*) ;;
+    *) echo "warning: local node $(node --version) differs from the pinned Node 22 build" >&2 ;;
+  esac
+fi
+
+if compose ps --status running worker | grep -q worker; then
+  compose stop -t 45 worker
+fi
+if compose ps --status running postgres | grep -q postgres; then
   ./backup-db.sh pre-deploy
 else
-  docker compose up -d postgres
+  compose up -d postgres
 fi
-docker compose build --pull web worker
-docker compose run --rm migrate
-docker compose up -d postgres web worker caddy
-docker compose exec -T web node -e "fetch('http://127.0.0.1:3000/api/health').then(async r=>{console.log(await r.text());if(!r.ok)process.exit(1)})"
-docker compose ps
+compose build --pull web worker
+# Migrate before any traffic reaches the new image.
+compose run --rm migrate
+compose up -d postgres web worker caddy
+compose exec -T web node -e "fetch('http://127.0.0.1:3000/api/health').then(async r=>{console.log(await r.text());if(!r.ok)process.exit(1)})"
+compose ps

@@ -12,10 +12,19 @@ const required = [
   'ARC_RPC_URL',
   'PRIVY_APP_ID',
   'PRIVY_APP_SECRET',
+  'PRIVY_AUTHORIZATION_KEY_ID',
   'PRIVY_AUTHORIZATION_PRIVATE_KEY',
 ] as const;
 for (const name of required) {
+  // Field names only: several of these values are secrets.
   if (!process.env[name]) throw new Error(`${name} is required`);
+}
+// The key ID identifies the key quorum that owns the private key. Neither works alone.
+if (
+  Boolean(process.env.PRIVY_AUTHORIZATION_KEY_ID) !==
+  Boolean(process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY)
+) {
+  throw new Error('PRIVY_AUTHORIZATION_KEY_ID and PRIVY_AUTHORIZATION_PRIVATE_KEY must be paired');
 }
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });

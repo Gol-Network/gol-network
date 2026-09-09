@@ -4,6 +4,7 @@ import { verifyAccessToken } from '@privy-io/node';
 import { Pool } from 'pg';
 import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
+import { EnvironmentError, runtimeConfig } from './env';
 
 const globalPool = globalThis as typeof globalThis & { golPool?: Pool };
 export const pool =
@@ -22,11 +23,12 @@ export interface Session {
 export async function authenticate(request: Request): Promise<Session> {
   const token = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
   if (!token) throw new HttpError(401, 'AUTH_REQUIRED');
-  if (process.env.GOL_DEV_TOKEN && constantTimeEqual(token, process.env.GOL_DEV_TOKEN)) {
-    return { subject: process.env.GOL_DEV_SUBJECT ?? 'developer', developer: true };
+  const { server } = runtimeConfig();
+  if (server.developerToken && constantTimeEqual(token, server.developerToken)) {
+    return { subject: server.developerSubject, developer: true };
   }
-  const appId = process.env.NEXT_PUBLIC_PRIVY_APP_ID;
-  const verificationKey = process.env.PRIVY_VERIFICATION_KEY;
+  const appId = server.privyAppId;
+  const verificationKey = server.privyVerificationKey;
   if (!appId || !verificationKey) throw new HttpError(503, 'AUTH_UNAVAILABLE');
   try {
     const verified = await verifyAccessToken({
@@ -42,7 +44,7 @@ export async function authenticate(request: Request): Promise<Session> {
 
 export function requireWriteOrigin(request: Request, session: Session): void {
   if (session.developer) return;
-  const configured = process.env.APP_ORIGIN;
+  const configured = runtimeConfig().server.appOrigin;
   if (!configured || request.headers.get('origin') !== configured) {
     throw new HttpError(403, 'ORIGIN_DENIED');
   }
@@ -81,6 +83,13 @@ export class HttpError extends Error {
 export function errorResponse(error: unknown): NextResponse {
   if (error instanceof ZodError) {
     return NextResponse.json({ error: 'INVALID_REQUEST' }, { status: 400 });
+  }
+  if (error instanceof EnvironmentError) {
+    // Field names only. A configuration value may itself be a secret.
+    return NextResponse.json(
+      { error: 'INVALID_ENVIRONMENT', fields: error.issues.map((issue) => issue.field) },
+      { status: 503 },
+    );
   }
   if (error instanceof HttpError) {
     return NextResponse.json({ error: error.code }, { status: error.status });

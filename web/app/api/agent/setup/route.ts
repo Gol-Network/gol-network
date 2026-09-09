@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
 import { PrivyClient } from '@privy-io/node';
 import { ARC_TESTNET_CHAIN_ID, addressSchema, golAccountAbi } from '@gol/protocol';
-import { createPublicClient, defineChain, http } from 'viem';
+import { agentPolicyDisclosure, buildAgentSignerPolicy } from '@gol/agent/privy';
 import { z } from 'zod';
+import { arcClient } from '@/server/chain';
+import { runtimeConfig } from '@/server/env';
 import {
   authenticate,
   errorResponse,
@@ -40,21 +42,16 @@ export async function POST(request: Request) {
       return Response.json(agentResponse(row));
     }
 
-    const appId = process.env.NEXT_PUBLIC_PRIVY_APP_ID;
-    const appSecret = process.env.PRIVY_APP_SECRET;
-    const signerId = process.env.PRIVY_AUTHORIZATION_KEY_ID;
-    const rpcUrl = process.env.ARC_RPC_URL;
-    if (!appId || !appSecret || !signerId || !rpcUrl || session.developer) {
+    const { server } = runtimeConfig();
+    const appId = server.privyAppId;
+    const appSecret = server.privyAppSecret;
+    // PRIVY_AUTHORIZATION_KEY_ID is the key-quorum/signer ID that owns
+    // PRIVY_AUTHORIZATION_PRIVATE_KEY. Startup validation proves they are configured as a pair.
+    const signerId = server.privyAuthorizationKeyId;
+    if (!appId || !appSecret || !signerId || session.developer) {
       throw new HttpError(503, 'AGENT_PROVISIONING_UNAVAILABLE');
     }
-    const chain = defineChain({
-      id: ARC_TESTNET_CHAIN_ID,
-      name: 'Arc Testnet',
-      nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 },
-      rpcUrls: { default: { http: [rpcUrl] } },
-      testnet: true,
-    });
-    const chainOwner = await createPublicClient({ chain, transport: http(rpcUrl) }).readContract({
+    const chainOwner = await arcClient().readContract({
       address: body.account,
       abi: golAccountAbi,
       functionName: 'owner',
@@ -77,32 +74,8 @@ export async function POST(request: Request) {
       .update(`${session.subject}:${body.account.toLowerCase()}`)
       .digest('hex');
     const policy = await privy.policies().create({
-      chain_type: 'ethereum',
-      name: `GOL ${body.account.slice(0, 10)} agent`,
-      version: '1.0',
+      ...buildAgentSignerPolicy(body.account),
       owner: { user_id: session.subject },
-      rules: [
-        {
-          name: 'Only submit to this GOL account on Arc',
-          action: 'ALLOW',
-          method: 'eth_sendTransaction',
-          conditions: [
-            {
-              field_source: 'ethereum_transaction',
-              field: 'chain_id',
-              operator: 'eq',
-              value: String(ARC_TESTNET_CHAIN_ID),
-            },
-            {
-              field_source: 'ethereum_transaction',
-              field: 'to',
-              operator: 'eq',
-              value: body.account,
-            },
-            { field_source: 'ethereum_transaction', field: 'value', operator: 'eq', value: '0' },
-          ],
-        },
-      ],
       idempotency_key: `gol-policy-${stableKey}`,
     });
     const wallet = await privy.wallets().create({
@@ -131,16 +104,13 @@ export async function POST(request: Request) {
 }
 
 function agentResponse(row: Record<string, unknown>) {
+  const account = addressSchema.parse(String(row.account_address).trim());
   return {
-    account: String(row.account_address).trim(),
+    account,
     agentAddress: String(row.agent_address).trim(),
     walletId: String(row.agent_wallet_id),
     policyId: String(row.policy_id),
-    policy: {
-      chainId: ARC_TESTNET_CHAIN_ID,
-      to: String(row.account_address).trim(),
-      value: '0',
-      defaultAction: 'DENY',
-    },
+    chainId: ARC_TESTNET_CHAIN_ID,
+    policy: agentPolicyDisclosure(account),
   };
 }

@@ -75,6 +75,8 @@ export interface ActivityFilter {
   cursor?: string;
 }
 
+export type Freshness = 'current' | 'catching_up' | 'stale' | 'unknown' | 'unavailable';
+
 export interface ActivityRecord {
   actionId: Hex;
   requestId: Hex32;
@@ -104,9 +106,11 @@ export interface ActivityPage {
   indexedAt: string | null;
   chainHeadBlock: string | null;
   hasIndexingErrors: boolean | null;
-  freshness: 'current' | 'catching_up' | 'stale' | 'unknown' | 'unavailable';
+  freshness: Freshness;
   sourceDeployment: string | null;
   partial: boolean;
+  /** Set when a response was structurally valid but failed scope or field validation. */
+  integrityMismatch?: boolean;
 }
 
 export interface Citation {
@@ -121,7 +125,11 @@ export interface GroundedAnswer {
   text: string;
   citations: Citation[];
   indexedBlock: string | null;
+  indexedAt: string | null;
   sourceDeployment: string | null;
+  freshness: Freshness;
   recordCount: number;
   partial: boolean;
+  /** True when the answer text is the deterministic evidence explanation, not a model response. */
+  deterministic: boolean;
 }

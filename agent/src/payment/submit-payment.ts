@@ -1,4 +1,5 @@
 import {
+  REFUSAL_RULES,
   golAccountAbi,
   parseUsdc,
   type Hex32,
@@ -15,15 +16,6 @@ import {
   type PaymentChain,
   type ScopedAgentSigner,
 } from './types.js';
-
-const RULES = [
-  'NONE',
-  'MANDATE_REVOKED',
-  'MANDATE_EXPIRED',
-  'RECIPIENT_NOT_ALLOWED',
-  'PER_PAYMENT_CAP',
-  'CUMULATIVE_CAP',
-] as const;
 
 export async function submitPayment(
   context: VerifiedAgentContext,
@@ -89,7 +81,7 @@ export async function reconcilePayment(
       requestId,
       'refused',
       txHash,
-      RULES[event.args.rule] ?? 'UNKNOWN',
+      REFUSAL_RULES[event.args.rule] ?? 'UNKNOWN',
       amount,
       event.args.headroom,
     );
@@ -111,7 +103,7 @@ export async function reconcilePayment(
       requestId,
       'refused',
       txHash,
-      RULES[stored.rule] ?? 'UNKNOWN',
+      REFUSAL_RULES[stored.rule] ?? 'UNKNOWN',
       amount,
       stored.headroom,
     );

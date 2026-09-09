@@ -1,5 +1,11 @@
-import { GolApp } from '../src/components/GolApp';
+import { GolApp } from '@/components/GolApp';
+import { ConfigurationNotice } from '@/components/ConfigurationNotice';
+import { publicConfigResult } from '@/server/env';
+
+export const dynamic = 'force-dynamic';
 
 export default function Page() {
-  return <GolApp privyEnabled={Boolean(process.env.NEXT_PUBLIC_PRIVY_APP_ID)} />;
+  const result = publicConfigResult();
+  if (!result.ok) return <ConfigurationNotice fields={result.fields} />;
+  return <GolApp config={result.config} />;
 }

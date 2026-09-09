@@ -19,6 +19,7 @@ void main().catch((error: unknown) => {
 });
 
 async function main() {
+  const health = await requestJson('/api/health').catch(() => ({}) as Record<string, unknown>);
   const account = await requestJson('/api/account');
   assert(account.state === 'ready', 'Linked account is not ready');
   assert(account.activeMandateId === mandateId, 'Configured mandate is not active');
@@ -51,6 +52,19 @@ async function main() {
   assert(isHash(second.txHash), 'Refusal result is missing a transaction hash');
 
   const indexed = await waitForIndexed(accountAddress, [firstRequestId, secondRequestId]);
+  const indexedRecords = Array.isArray(indexed.records)
+    ? (indexed.records as Record<string, unknown>[])
+    : [];
+  const indexedActionIds = [firstRequestId, secondRequestId].map((id) => ({
+    requestId: id,
+    actionId: indexedRecords.find((record) => record.requestId === id)?.actionId ?? null,
+    transactionHash:
+      indexedRecords.find((record) => record.requestId === id)?.transactionHash ?? null,
+  }));
+  assert(
+    indexedActionIds.every((entry) => entry.actionId !== null),
+    'The Graph did not report an indexed action for both outcomes',
+  );
   const answer = await requestJson('/api/questions', {
     method: 'POST',
     body: { account: accountAddress, question: 'Why was the 70 USDC payment refused?' },
@@ -66,7 +80,12 @@ async function main() {
       {
         accepted: true,
         chainId: account.chainId,
+        // Public identifiers only. No token or private key is ever printed.
+        applicationUrl: baseUrl,
+        sourceCommit: health.sourceCommit ?? null,
         account: accountAddress,
+        agentAddress: account.agentAddress ?? null,
+        policyId: (account.agentControl as Record<string, unknown> | undefined)?.policyId ?? null,
         mandateId,
         executed: pickResult(first),
         refused: pickResult(second),
@@ -74,10 +93,14 @@ async function main() {
           deployment: indexed.sourceDeployment,
           indexedBlock: indexed.indexedBlock,
           freshness: indexed.freshness,
+          actions: indexedActionIds,
         },
         answer: {
           status: answer.status,
           text: answer.text,
+          indexedBlock: answer.indexedBlock,
+          sourceDeployment: answer.sourceDeployment,
+          deterministic: answer.deterministic,
           citations: answer.citations,
         },
       },

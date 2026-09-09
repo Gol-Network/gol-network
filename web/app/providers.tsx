@@ -2,24 +2,21 @@
 
 import { PrivyProvider } from '@privy-io/react-auth';
 import type { ReactNode } from 'react';
+import type { PublicConfig } from '@/config';
 
-const arcTestnet = {
-  id: 5_042_002,
-  name: 'Arc Testnet',
-  nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 },
-  rpcUrls: { default: { http: ['https://rpc.testnet.arc.network'] } },
-  blockExplorers: {
-    default: { name: 'Arc Explorer', url: 'https://testnet.arcscan.app' },
-  },
-  testnet: true,
-} as const;
-
-export function Providers({ children }: { children: ReactNode }) {
-  const appId = process.env.NEXT_PUBLIC_PRIVY_APP_ID;
-  if (!appId) return children;
+export function Providers({ config, children }: { config: PublicConfig; children: ReactNode }) {
+  if (!config.privyAppId) return children;
+  const arcTestnet = {
+    id: config.chainId,
+    name: config.chainName,
+    nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 },
+    rpcUrls: { default: { http: [config.rpcUrl] } },
+    blockExplorers: { default: { name: 'Arc Explorer', url: config.explorerUrl } },
+    testnet: true,
+  } as const;
   return (
     <PrivyProvider
-      appId={appId}
+      appId={config.privyAppId}
       config={{
         defaultChain: arcTestnet,
         supportedChains: [arcTestnet],
