@@ -15,6 +15,7 @@
     "format:check": "prettier --check .",
     "format": "prettier --write .",
     "preflight": "pnpm --filter @gol/agent exec tsx ../scripts/preflight.ts",
+    "provider:preflight": "pnpm --filter @gol/agent exec tsx ../scripts/provider-preflight.ts",
     "policy:probe": "pnpm --filter @gol/agent probe",
     "subgraph:prepare": "pnpm --filter @gol/agent exec tsx ../scripts/prepare-subgraph.ts"
   },

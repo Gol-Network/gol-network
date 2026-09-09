@@ -20,6 +20,12 @@ export interface JournalRequest {
   headroomUnits: string | null;
   errorCode: string | null;
   leaseOwner: string | null;
+  /** Reserved pending nonce for the KMS state machine. Never reused while a signed artifact exists. */
+  txNonce: string | null;
+  /** Exact serialized signed transaction. A bearer artifact: never returned by an API, never logged. */
+  signedRawTransaction: string | null;
+  signingKeyArn: string | null;
+  unsignedIntentHash: string | null;
 }
 
 export class RequestConflictError extends Error {
@@ -93,7 +99,7 @@ export class PgJournal {
            FROM requests r
            JOIN account_links a USING (account_address)
            WHERE (
-             r.state IN ('queued', 'signing', 'submitted', 'pending')
+             r.state IN ('queued', 'signing', 'signing_prepared', 'signed', 'submitted', 'pending')
              OR (r.state = 'unknown' AND (r.tx_hash IS NOT NULL OR r.provider_operation_id IS NOT NULL))
            )
              AND (r.lease_until IS NULL OR r.lease_until < now())
@@ -148,6 +154,119 @@ export class PgJournal {
       [id, workerId, recipient, amountUnits],
     );
     if (updated.rowCount !== 1) throw new Error('LEASE_LOST');
+  }
+
+  /**
+   * Reserves a pending nonce for the KMS state machine under a per-signer advisory lock and records
+   * the parsed intent. The pending chain nonce is read inside the lock via `readPendingNonce`. A
+   * row already in `signing_prepared` returns its stored nonce unchanged so a crash before signing
+   * replays deterministically.
+   */
+  async prepareSigning(input: {
+    id: string;
+    workerId: string;
+    signerAddress: Address;
+    recipient: Address;
+    amountUnits: string;
+    unsignedIntentHash: string;
+    readPendingNonce: () => Promise<number>;
+  }): Promise<{ nonce: number; reused: boolean }> {
+    return this.transaction(async (client) => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+        input.signerAddress.toLowerCase(),
+      ]);
+
+      const current = await client.query(
+        `SELECT state, tx_nonce, unsigned_intent_hash FROM requests
+         WHERE id = $1 AND lease_owner = $2`,
+        [input.id, input.workerId],
+      );
+      if (current.rowCount !== 1) throw new Error('LEASE_LOST');
+      const row = current.rows[0];
+      if (row.state === 'signing_prepared' && row.tx_nonce != null) {
+        if (String(row.unsigned_intent_hash) !== input.unsignedIntentHash) {
+          throw new Error('INTENT_HASH_DRIFT');
+        }
+        return { nonce: Number(row.tx_nonce), reused: true };
+      }
+      if (row.state !== 'queued') throw new Error('AMBIGUOUS_SIGNING_STATE');
+
+      const pendingNonce = await input.readPendingNonce();
+      const highest = await client.query(
+        `SELECT max(r.tx_nonce)::bigint AS n FROM requests r
+         JOIN account_links a USING (account_address)
+         WHERE lower(a.agent_address) = lower($1)
+           AND r.id <> $2
+           AND r.tx_nonce IS NOT NULL
+           AND r.state IN ('signing_prepared', 'signed', 'submitted', 'pending')`,
+        [input.signerAddress, input.id],
+      );
+      const inFlightNext =
+        highest.rows[0]?.n != null ? Number(highest.rows[0].n) + 1 : pendingNonce;
+      const nonce = Math.max(pendingNonce, inFlightNext);
+
+      const updated = await client.query(
+        `UPDATE requests SET state = 'signing_prepared', parsed_recipient = $3,
+           parsed_amount = $4, attempted_units = $4, tx_nonce = $5, unsigned_intent_hash = $6,
+           last_broadcast_error = NULL, updated_at = now()
+         WHERE id = $1 AND lease_owner = $2 AND state = 'queued'`,
+        [
+          input.id,
+          input.workerId,
+          input.recipient,
+          input.amountUnits,
+          nonce,
+          input.unsignedIntentHash,
+        ],
+      );
+      if (updated.rowCount !== 1) throw new Error('LEASE_LOST');
+      return { nonce, reused: false };
+    });
+  }
+
+  /** Persists the exact signed bytes and local hash atomically before any broadcast is attempted. */
+  async recordSigned(input: {
+    id: string;
+    workerId: string;
+    txHash: Hex32;
+    rawTransaction: string;
+    signingKeyArn: string;
+  }): Promise<void> {
+    await this.transaction(async (client) => {
+      const updated = await client.query(
+        `UPDATE requests SET state = 'signed', signed_raw_transaction = $3, tx_hash = $4,
+           signing_key_arn = $5, signed_at = now(), updated_at = now()
+         WHERE id = $1 AND lease_owner = $2 AND state IN ('signing_prepared', 'signed')`,
+        [input.id, input.workerId, input.rawTransaction, input.txHash, input.signingKeyArn],
+      );
+      if (updated.rowCount !== 1) throw new Error('LEASE_LOST');
+      await client.query(
+        `INSERT INTO request_transactions (request_row_id, tx_hash) VALUES ($1, $2)
+         ON CONFLICT DO NOTHING`,
+        [input.id, input.txHash],
+      );
+    });
+  }
+
+  /** Marks the signed transaction as broadcast. The exact bytes remain stored for rebroadcast. */
+  async recordBroadcast(id: string, workerId: string): Promise<void> {
+    const updated = await this.pool.query(
+      `UPDATE requests SET state = 'submitted', broadcast_attempted_at = now(),
+         last_broadcast_error = NULL, updated_at = now()
+       WHERE id = $1 AND lease_owner = $2 AND state IN ('signed', 'submitted')`,
+      [id, workerId],
+    );
+    if (updated.rowCount !== 1) throw new Error('LEASE_LOST');
+  }
+
+  /** Records an ambiguous broadcast without advancing state, so recovery rebroadcasts the bytes. */
+  async recordBroadcastError(id: string, workerId: string, error: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE requests SET last_broadcast_error = $3, broadcast_attempted_at = now(),
+         updated_at = now()
+       WHERE id = $1 AND lease_owner = $2`,
+      [id, workerId, error.slice(0, 100)],
+    );
   }
 
   async finish(
@@ -236,5 +355,9 @@ function mapRow(row: Record<string, unknown>): JournalRequest {
     headroomUnits: row.headroom_units ? String(row.headroom_units) : null,
     errorCode: row.error_code ? String(row.error_code) : null,
     leaseOwner: row.lease_owner ? String(row.lease_owner) : null,
+    txNonce: row.tx_nonce != null ? String(row.tx_nonce) : null,
+    signedRawTransaction: row.signed_raw_transaction ? String(row.signed_raw_transaction) : null,
+    signingKeyArn: row.signing_key_arn ? String(row.signing_key_arn) : null,
+    unsignedIntentHash: row.unsigned_intent_hash ? String(row.unsigned_intent_hash) : null,
   };
 }

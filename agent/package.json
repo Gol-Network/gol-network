@@ -23,6 +23,10 @@
       "types": "./src/privy/policy.ts",
       "default": "./dist/privy/policy.js"
     },
+    "./signer-disclosure": {
+      "types": "./src/signers/disclosure.ts",
+      "default": "./dist/signers/disclosure.js"
+    },
     "./instruction": {
       "types": "./src/payment/parse-instruction.ts",
       "default": "./dist/payment/parse-instruction.js"
@@ -37,6 +41,7 @@
     "probe": "tsx src/tools/policy-probe.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-kms": "3.1128.0",
     "@gol/protocol": "workspace:*",
     "@privy-io/node": "0.34.0",
     "commander": "15.0.0",

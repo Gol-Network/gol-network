@@ -11,6 +11,10 @@ export interface PublicConfig {
   mode: 'live' | 'fixture';
   privyAppId: string | null;
   factoryAddress: Address | null;
+  /** Active agent signer provider. Privy still authenticates the owner in both modes. */
+  agentSignerProvider: 'privy' | 'aws_kms';
+  /** The shared AWS KMS agent address, when `agentSignerProvider` is `aws_kms`. Public, non-secret. */
+  agentSignerAddress: Address | null;
   chainId: number;
   chainName: string;
   rpcUrl: string;

@@ -795,10 +795,19 @@ function ConsentPanel(props: {
   disabled: boolean;
 }) {
   const account = props.account?.accountAddress ?? null;
+  const isKms = props.config.agentSignerProvider === 'aws_kms';
   return (
     <div className="review" data-testid="agent-consent">
-      <p className="kicker">REVIEW BEFORE PROVISIONING</p>
+      <p className="kicker">
+        {isKms ? 'REVIEW THE RESTRICTED AGENT SIGNER' : 'REVIEW BEFORE PROVISIONING'}
+      </p>
       <dl>
+        <dt>Signer</dt>
+        <dd>
+          {isKms
+            ? 'AWS KMS-backed agent. The key is non-exportable and the backend never holds it.'
+            : 'A separate Privy agent wallet with a default-deny signer policy.'}
+        </dd>
         <dt>Purpose</dt>
         <dd>Submit GOL payment requests to your account contract and nothing else.</dd>
         <dt>Chain</dt>
@@ -809,10 +818,22 @@ function ConsentPanel(props: {
         <dd>
           <code>{account ?? 'account not created yet'}</code>
         </dd>
+        {isKms && props.config.agentSignerAddress ? (
+          <>
+            <dt>KMS agent address</dt>
+            <dd>
+              <code>{props.config.agentSignerAddress}</code>
+            </dd>
+          </>
+        ) : null}
         <dt>Native value</dt>
         <dd>Exactly zero. The signer can never move native balance.</dd>
-        <dt>Everything else</dt>
-        <dd>Denied by default. Calldata is not restricted by this policy.</dd>
+        <dt>Mandate authority</dt>
+        <dd>
+          {isKms
+            ? 'The on-chain GolAccount enforces recipient, caps, expiry, and revocation. AWS KMS cannot inspect the transaction and does not understand mandate policy.'
+            : 'Denied by default. Calldata is not restricted by this policy.'}
+        </dd>
         <dt>Revocation</dt>
         <dd>Revoke the mandate from your owner wallet at any time.</dd>
       </dl>
@@ -829,7 +850,10 @@ function ConsentPanel(props: {
           Cancel
         </button>
         <button className="primary" onClick={props.onConfirm} disabled={props.disabled}>
-          I understand, provision the agent wallet <span>→</span>
+          {isKms
+            ? 'I understand, link the KMS-backed agent'
+            : 'I understand, provision the agent wallet'}{' '}
+          <span>→</span>
         </button>
       </div>
     </div>

@@ -76,16 +76,27 @@ export function deriveSteps(input: {
       action: 'create_account',
       actionLabel: 'Create GOL account',
     },
-    {
-      id: 'agent_wallet',
-      title: 'Restricted agent wallet provisioned',
-      detail: agentReady
-        ? 'A separate agent wallet exists with a default-deny signer policy.'
-        : 'Review the signer policy, then provision the separate agent wallet.',
-      complete: agentReady,
-      action: 'provision_agent',
-      actionLabel: 'Review and provision agent wallet',
-    },
+    config.agentSignerProvider === 'aws_kms'
+      ? {
+          id: 'agent_wallet',
+          title: 'AWS KMS-backed agent address linked',
+          detail: agentReady
+            ? 'The non-exportable KMS agent address is linked to this account.'
+            : 'Review the restricted agent signer, then link the KMS-backed agent address.',
+          complete: agentReady,
+          action: 'provision_agent',
+          actionLabel: 'Review and link KMS agent',
+        }
+      : {
+          id: 'agent_wallet',
+          title: 'Restricted agent wallet provisioned',
+          detail: agentReady
+            ? 'A separate agent wallet exists with a default-deny signer policy.'
+            : 'Review the signer policy, then provision the separate agent wallet.',
+          complete: agentReady,
+          action: 'provision_agent',
+          actionLabel: 'Review and provision agent wallet',
+        },
     {
       id: 'agent_gas',
       title: 'Agent gas reserve funded and confirmed',

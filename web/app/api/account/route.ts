@@ -1,5 +1,6 @@
 import { ARC_TESTNET_USDC, erc20Abi, golAccountAbi } from '@gol/protocol';
 import { agentPolicyDisclosure } from '@gol/agent/privy';
+import { kmsAgentDisclosure } from '@gol/agent/signer-disclosure';
 import { NextResponse } from 'next/server';
 import { authenticate, errorResponse, pool } from '@/server/core';
 import { arcClient } from '@/server/chain';
@@ -12,7 +13,8 @@ export async function GET(request: Request) {
     const session = await authenticate(request);
     const { public: publicConfig } = runtimeConfig();
     const result = await pool.query(
-      `SELECT owner_address, account_address, agent_address, agent_wallet_id, policy_id, updated_at
+      `SELECT owner_address, account_address, agent_address, agent_wallet_id, policy_id,
+              signer_provider, signer_region, updated_at
        FROM account_links WHERE user_subject = $1`,
       [session.subject],
     );
@@ -72,12 +74,23 @@ export async function GET(request: Request) {
       ownerAddress,
       accountAddress,
       agentAddress,
-      agentControl: {
-        walletId: row.agent_wallet_id,
-        policyId: row.policy_id,
-        status: 'configured',
-        disclosure: agentPolicyDisclosure(accountAddress),
-      },
+      agentControl:
+        String(row.signer_provider ?? 'privy') === 'aws_kms'
+          ? {
+              provider: 'aws_kms' as const,
+              walletId: null,
+              policyId: null,
+              status: 'configured' as const,
+              region: row.signer_region ? String(row.signer_region) : null,
+              disclosure: kmsAgentDisclosure(agentAddress),
+            }
+          : {
+              provider: 'privy' as const,
+              walletId: row.agent_wallet_id ? String(row.agent_wallet_id) : null,
+              policyId: row.policy_id ? String(row.policy_id) : null,
+              status: 'configured' as const,
+              disclosure: agentPolicyDisclosure(accountAddress),
+            },
       // The native gas view and the ERC-20 payment view describe the same underlying Arc USDC.
       // They are reported separately and must never be added together.
       balances: {

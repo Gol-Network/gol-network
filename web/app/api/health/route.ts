@@ -38,6 +38,17 @@ export async function GET() {
     checkGraph(server.graphQueryUrl, server.graphApiKey),
   ]);
 
+  // Configuration/readiness only. No `kms:Sign` and no `kms:GetPublicKey` call is ever made here:
+  // the worker is the only process that talks to KMS.
+  const kmsSignerConfigured = Boolean(
+    server.awsKmsSignerKeyArn && server.awsKmsSignerRegion && server.awsKmsSignerAddress,
+  );
+  const privySignerConfigured = Boolean(
+    server.privyAuthorizationKeyId && server.privyAuthorizationPrivateKey,
+  );
+  const signerReady =
+    server.agentSignerProvider === 'aws_kms' ? kmsSignerConfigured : privySignerConfigured;
+
   const components = {
     database,
     chain,
@@ -46,9 +57,13 @@ export async function GET() {
     privyConfigured: Boolean(
       server.privyAppId && server.privyAppSecret && server.privyVerificationKey,
     ),
-    privySignerConfigured: Boolean(
-      server.privyAuthorizationKeyId && server.privyAuthorizationPrivateKey,
-    ),
+    signer: {
+      provider: server.agentSignerProvider,
+      ready: signerReady,
+      kmsConfigured: kmsSignerConfigured,
+      privySignerConfigured,
+    },
+    privySignerConfigured,
     modelConfigured: Boolean(server.openAiApiKey),
     factoryConfigured: Boolean(publicConfig.factoryAddress),
   };
@@ -56,7 +71,7 @@ export async function GET() {
     components.database.ok &&
     components.chain.ok &&
     components.privyConfigured &&
-    components.privySignerConfigured &&
+    signerReady &&
     components.modelConfigured &&
     components.factoryConfigured &&
     components.graph.status !== 'unconfigured';

@@ -14,3 +14,6 @@ allowBuilds:
   keccak: true
   sharp: true
   utf-8-validate: true
+
+minimumReleaseAgeExclude:
+  - '@aws-sdk/client-kms@3.1128.0'

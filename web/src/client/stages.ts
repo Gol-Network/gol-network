@@ -48,8 +48,9 @@ export const PAYMENT_STAGES: Record<PaymentStage, StageCopy> = {
     terminal: true,
   },
   signer_blocked: {
-    label: 'SIGNER BLOCKED',
-    detail: 'The restricted Privy signer rejected the request before it was broadcast.',
+    label: 'SIGNER BLOCKED BEFORE SUBMISSION',
+    detail:
+      'The restricted agent signer rejected the request before it was broadcast. There is no on-chain receipt.',
     terminal: true,
   },
   technical_failure: {
@@ -68,6 +69,9 @@ const JOURNAL_TO_STAGE: Record<string, PaymentStage> = {
   queued: 'queued',
   needs_clarification: 'needs_clarification',
   signing: 'signing',
+  // KMS state machine: a locked nonce, then the exact signed bytes persisted before broadcast.
+  signing_prepared: 'signing',
+  signed: 'submitted',
   submitted: 'submitted',
   pending: 'confirming',
   executed: 'executed',

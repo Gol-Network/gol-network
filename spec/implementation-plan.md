@@ -1,5 +1,12 @@
 # GOL ETHOnline Implementation Plan
 
+> **Signer update, 9 September 2026:** The verified AWS KMS direction in
+> [KMS-backed agent signer specification](kms-backed-agent-signer-spec.md) supersedes this plan's
+> Privy agent-wallet, Privy signer-policy, and provider-idempotency implementation requirements.
+> Privy remains the owner authentication and wallet provider. Follow the KMS specification for the
+> next implementation and `gol.network` production cutover; do not treat older Privy-agent tasks in
+> this document as active requirements.
+
 > **For agentic workers:** Use `retired workflow` to implement this plan task-by-task after specification approval. Steps use checkboxes. Work inline unless Anderson explicitly requests delegation. This plan does not authorize application implementation yet.
 
 **Goal:** Deliver a live Arc testnet account where an agent's 40 USDC payment succeeds, its subsequent 70 USDC request is refused against 60 remaining, and The Graph supports a cited natural-language explanation.

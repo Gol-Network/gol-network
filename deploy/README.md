@@ -19,6 +19,28 @@ PostgreSQL stays on the private Compose network and publishes no host port. The 
 
 Browser configuration is read on the server when the container starts, not when the image is built, so one image can serve any configured deployment. `FACTORY_ADDRESS` replaces the former build-time `NEXT_PUBLIC_FACTORY_ADDRESS`, and one canonical `PRIVY_APP_ID` serves authentication, provisioning, the worker, and the browser.
 
+## Agent signer: AWS KMS
+
+`AGENT_SIGNER_PROVIDER` selects the agent signer. `privy` keeps the historical Privy agent wallet and scoped policy. `aws_kms` replaces the agent signer with a non-exportable AWS KMS `ECC_SECG_P256K1`, `SIGN_VERIFY` key in `AWS_KMS_SIGNER_REGION`. Privy still authenticates the owner and owns the owner embedded wallet in both modes. The on-chain `GolAccount` remains the payment authority; KMS cannot inspect an Ethereum digest and does not understand mandate policy.
+
+### Provisioning the production key
+
+1. Create the key: `ECC_SECG_P256K1`, `SIGN_VERIFY`, region `ap-northeast-1`, alias `alias/gol-agent-signer-production`, tags for project, environment, owner, purpose, and creation date. Never reuse the backup encryption key (`alias/gol-backups`) or a disposable verification key.
+2. Key policy: no application principal may `DisableKey`, `ScheduleKeyDeletion`, `PutKeyPolicy`, `CreateGrant`, or manage aliases. Only account administrators hold those rights.
+3. Derive the Ethereum address from the key's SPKI public key with two independent implementations and confirm they are byte-for-byte equal. Record it as `AWS_KMS_SIGNER_ADDRESS` (EIP-55 checksum).
+4. Worker IAM: grant only `kms:GetPublicKey` and `kms:Sign` (conditioned on `kms:SigningAlgorithm = ECDSA_SHA_256`) on the exact key ARN, attached to the EC2 instance role the worker container uses via IMDS. Set the instance metadata hop limit to 2 so the container can read the role. No static AWS access keys enter `.env.production` or any container.
+5. Web credential boundary: the `web` service sets `AWS_EC2_METADATA_DISABLED=true`, so it can obtain no AWS credentials and can never call `kms:Sign`. Verify independently: `docker compose exec web env | grep AWS_EC2_METADATA_DISABLED` and confirm the web image imports no KMS SDK.
+6. CloudTrail: a durable multi-region trail with encrypted storage and retention, plus alerts for `DisableKey`, `ScheduleKeyDeletion`, `PutKeyPolicy`, `CreateGrant`, unusual `Sign` volume, and signing by an unexpected principal. Event History alone is not the production audit solution.
+
+The worker re-derives the address from the key on startup and refuses to run if it does not match `AWS_KMS_SIGNER_ADDRESS` and every `signer_provider='aws_kms'` account link. The web `/api/health` reports `components.signer` (provider and configuration presence) without any KMS call.
+
+### Rotation and rollback
+
+- A signer migration requires a new owner-signed mandate for the new agent address, never a contract redeployment. Switching `AGENT_SIGNER_PROVIDER` back to `privy` does not reactivate an old mandate.
+- Before disabling or scheduling deletion of a KMS key, reconcile every `signed` or `submitted` request by its stored local hash and confirm owners have revoked or replaced affected mandates.
+- If key access is lost, provision a replacement key, publish its derived address, and require a new owner-signed mandate. Never invent a new agent association.
+- Owner mandate revocation is the definitive payment-authority rollback and needs neither the backend nor AWS.
+
 ## Release
 
 ```bash
@@ -45,4 +67,4 @@ The restore script refuses database names outside the `gol_restore_` prefix. It 
 
 After a VM or container restart, confirm `docker compose ps`, `/api/health`, free disk space, the worker log, and the newest S3 backup. `/api/health` actively verifies the database and the Arc chain ID and performs one bounded Graph metadata query; it never makes a paid model call. The journal reconciles provider operation IDs and transaction hashes before any signing retry, and replays a lost signing response under the same Privy idempotency key rather than creating a second request. Caddy owns TLS state in `caddy_data`; PostgreSQL state remains in `postgres_data`.
 
-Before a rehearsal, run `pnpm preflight` and, with `GOL_POLICY_PROBE=1`, `pnpm policy:probe` from an operator shell that has `.env.production` loaded. Both print booleans, public identifiers, and error codes only.
+Before a rehearsal, run `pnpm provider:preflight` (alias `pnpm preflight`) from an operator shell that has `.env.production` loaded. With `AGENT_SIGNER_PROVIDER=aws_kms` it checks the KMS signer configuration (ARN shape, region, derived address checksum, fee ceilings) instead of the Privy authorization quorum, and issues no `kms:Sign`, `kms:GetPublicKey`, or paid model call. The Privy `pnpm policy:probe` applies only to `AGENT_SIGNER_PROVIDER=privy`. All operator commands print booleans, public identifiers, and error codes only.

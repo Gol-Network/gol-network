@@ -85,6 +85,8 @@ async function main() {
         sourceCommit: health.sourceCommit ?? null,
         account: accountAddress,
         agentAddress: account.agentAddress ?? null,
+        signerProvider:
+          (account.agentControl as Record<string, unknown> | undefined)?.provider ?? 'privy',
         policyId: (account.agentControl as Record<string, unknown> | undefined)?.policyId ?? null,
         mandateId,
         executed: pickResult(first),

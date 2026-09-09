@@ -21,6 +21,8 @@ export interface EnvironmentIssue {
     | 'invalid_url'
     | 'invalid_chain_id'
     | 'invalid_amount'
+    | 'invalid_arn'
+    | 'invalid_provider'
     | 'unpaired';
 }
 
@@ -37,6 +39,12 @@ export interface RuntimeConfig {
     graphQueryUrl: string | null;
     graphApiKey: string | null;
     openAiApiKey: string | null;
+    /** Active agent signer. Privy stays authoritative for owner authentication regardless. */
+    agentSignerProvider: 'privy' | 'aws_kms';
+    /** Operational configuration. Never exposed to a browser bundle or a public API response. */
+    awsKmsSignerKeyArn: string | null;
+    awsKmsSignerRegion: string | null;
+    awsKmsSignerAddress: string | null;
     demoAccount: string | null;
     developerToken: string | null;
     developerSubject: string;
@@ -150,6 +158,32 @@ export function parseEnvironment(
     });
   }
 
+  // Agent signer selection. The KMS fields are operational configuration, never browser-exposed.
+  const signerProviderRaw = value('AGENT_SIGNER_PROVIDER');
+  let agentSignerProvider: 'privy' | 'aws_kms' = 'privy';
+  if (signerProviderRaw !== null) {
+    if (signerProviderRaw === 'privy' || signerProviderRaw === 'aws_kms') {
+      agentSignerProvider = signerProviderRaw;
+    } else {
+      issues.push({ field: 'AGENT_SIGNER_PROVIDER', problem: 'invalid_provider' });
+    }
+  }
+  const isKms = agentSignerProvider === 'aws_kms';
+  const kmsDemand = (name: string): string | null => {
+    const raw = value(name);
+    if (isKms && raw === null) issues.push({ field: name, problem: 'required' });
+    return raw;
+  };
+  const awsKmsSignerKeyArnRaw = kmsDemand('AWS_KMS_SIGNER_KEY_ARN');
+  if (awsKmsSignerKeyArnRaw !== null && !awsKmsSignerKeyArnRaw.startsWith('arn:aws:kms:')) {
+    issues.push({ field: 'AWS_KMS_SIGNER_KEY_ARN', problem: 'invalid_arn' });
+  }
+  const awsKmsSignerRegion = kmsDemand('AWS_KMS_SIGNER_REGION');
+  const awsKmsSignerAddress = address(
+    'AWS_KMS_SIGNER_ADDRESS',
+    kmsDemand('AWS_KMS_SIGNER_ADDRESS'),
+  );
+
   const factoryAddress = address(
     'FACTORY_ADDRESS',
     demand('FACTORY_ADDRESS', value('FACTORY_ADDRESS')),
@@ -180,6 +214,8 @@ export function parseEnvironment(
         rpcUrl: rpcUrl ?? ARC_TESTNET_RPC_URL,
         explorerUrl: explorerUrl ?? ARC_TESTNET_EXPLORER_URL,
         faucetUrl,
+        agentSignerProvider,
+        agentSignerAddress: isKms ? awsKmsSignerAddress : null,
         recipientLabel: value('GOL_RECIPIENT_LABEL') ?? 'Design contractor',
         accountTargetUnits: usdcUnits(
           'GOL_ACCOUNT_TARGET_USDC',
@@ -205,6 +241,10 @@ export function parseEnvironment(
         graphQueryUrl,
         graphApiKey: value('GRAPH_API_KEY'),
         openAiApiKey: value('OPENAI_API_KEY'),
+        agentSignerProvider,
+        awsKmsSignerKeyArn: awsKmsSignerKeyArnRaw,
+        awsKmsSignerRegion,
+        awsKmsSignerAddress,
         demoAccount,
         developerToken: value('GOL_DEV_TOKEN'),
         developerSubject: value('GOL_DEV_SUBJECT') ?? 'developer',

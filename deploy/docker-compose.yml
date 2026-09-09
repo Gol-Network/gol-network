@@ -43,6 +43,9 @@ services:
     environment:
       DATABASE_URL: postgresql://gol_runtime:${POSTGRES_RUNTIME_PASSWORD:-}@postgres:5432/gol
       GOL_SOURCE_COMMIT: ${RELEASE_COMMIT:-}
+      # Credential boundary: the web container can obtain no AWS credentials at all, so it can
+      # never call kms:Sign or kms:GetPublicKey. Independently testable with `docker compose exec`.
+      AWS_EC2_METADATA_DISABLED: 'true'
     # Caddy is the only public ingress; no host port is published for the application itself.
     networks: [public, private]
     depends_on:
@@ -73,8 +76,11 @@ services:
     environment:
       DATABASE_URL: postgresql://gol_runtime:${POSTGRES_RUNTIME_PASSWORD:-}@postgres:5432/gol
       GOL_SOURCE_COMMIT: ${RELEASE_COMMIT:-}
-    # The worker needs outbound access to Privy, Arc, and OpenAI as well as private PostgreSQL.
-    # It publishes no port, so `public` grants egress without any inbound exposure.
+      # The worker is the only process that talks to AWS KMS. Credentials come from the EC2
+      # instance role over IMDS (hop limit 2 required); no static AWS keys enter the container.
+      AWS_REGION: ${AWS_KMS_SIGNER_REGION:-ap-northeast-1}
+    # The worker needs outbound access to Privy, Arc, OpenAI, and AWS KMS as well as private
+    # PostgreSQL. It publishes no port, so `public` grants egress without any inbound exposure.
     networks: [public, private]
     depends_on:
       migrate: { condition: service_completed_successfully }

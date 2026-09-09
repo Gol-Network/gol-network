@@ -20,6 +20,7 @@ type Check = {
 };
 
 const env = process.env;
+const SIGNER_PROVIDER = env.AGENT_SIGNER_PROVIDER === 'aws_kms' ? 'aws_kms' : 'privy';
 
 void main();
 
@@ -33,10 +34,17 @@ async function main() {
     'PRIVY_APP_ID',
     'PRIVY_APP_SECRET',
     'PRIVY_VERIFICATION_KEY',
-    'PRIVY_AUTHORIZATION_KEY_ID',
-    'PRIVY_AUTHORIZATION_PRIVATE_KEY',
     'OPENAI_API_KEY',
     'FACTORY_ADDRESS',
+    ...(SIGNER_PROVIDER === 'aws_kms'
+      ? [
+          'AWS_KMS_SIGNER_KEY_ARN',
+          'AWS_KMS_SIGNER_REGION',
+          'AWS_KMS_SIGNER_ADDRESS',
+          'AGENT_MAX_GAS',
+          'AGENT_MAX_FEE_PER_GAS',
+        ]
+      : ['PRIVY_AUTHORIZATION_KEY_ID', 'PRIVY_AUTHORIZATION_PRIVATE_KEY']),
   ];
   const missing = configured.filter((name) => !env[name]);
   checks.push({
@@ -44,17 +52,23 @@ async function main() {
     ok: missing.length === 0,
     detail: missing.length === 0 ? 'all' : missing.join(','),
   });
-  checks.push({
-    name: 'privy_authorization_pair',
-    ok: Boolean(env.PRIVY_AUTHORIZATION_KEY_ID) === Boolean(env.PRIVY_AUTHORIZATION_PRIVATE_KEY),
-    detail: env.PRIVY_AUTHORIZATION_KEY_ID ?? null,
-  });
+  checks.push({ name: 'agent_signer_provider', ok: true, detail: SIGNER_PROVIDER });
+
+  if (SIGNER_PROVIDER === 'aws_kms') {
+    checks.push(kmsSignerConfig());
+  } else {
+    checks.push({
+      name: 'privy_authorization_pair',
+      ok: Boolean(env.PRIVY_AUTHORIZATION_KEY_ID) === Boolean(env.PRIVY_AUTHORIZATION_PRIVATE_KEY),
+      detail: env.PRIVY_AUTHORIZATION_KEY_ID ?? null,
+    });
+  }
 
   checks.push(await arcChainId());
   checks.push(await deployedBytecode());
   checks.push(await accountOwnership());
   checks.push(await privyApplication());
-  checks.push(await privySignerQuorum());
+  if (SIGNER_PROVIDER === 'privy') checks.push(await privySignerQuorum());
   checks.push(await openAiModelAccess());
   checks.push(await graphMeta());
 
@@ -106,6 +120,30 @@ async function accountOwnership(): Promise<Check> {
   } catch (error) {
     return { name: 'account_ownership', ok: false, error: code(error) };
   }
+}
+
+/**
+ * KMS signer configuration only. `kms:GetPublicKey` belongs to the worker identity, so the preflight
+ * checks ARN shape, region presence, address checksum, and the numeric ceilings without any AWS call.
+ */
+function kmsSignerConfig(): Check {
+  const arn = env.AWS_KMS_SIGNER_KEY_ARN ?? '';
+  const region = env.AWS_KMS_SIGNER_REGION ?? '';
+  const address = env.AWS_KMS_SIGNER_ADDRESS ?? '';
+  const arnOk = /^arn:aws:kms:[a-z0-9-]+:\d{12}:key\/[0-9a-fA-F-]{36}$/.test(arn);
+  const regionOk = /^[a-z]{2}-[a-z]+-\d$/.test(region);
+  const addressOk = /^0x[0-9a-fA-F]{40}$/.test(address);
+  const gasOk = /^[1-9][0-9]*$/.test(env.AGENT_MAX_GAS ?? '');
+  const feeOk = /^[1-9][0-9]*$/.test(env.AGENT_MAX_FEE_PER_GAS ?? '');
+  const arnRegion = arn.split(':')[3] ?? '';
+  return {
+    name: 'kms_signer_config',
+    ok: arnOk && regionOk && addressOk && gasOk && feeOk && arnRegion === region,
+    detail: addressOk ? address : null,
+    ...(arnOk && regionOk && addressOk && gasOk && feeOk && arnRegion === region
+      ? {}
+      : { error: 'INVALID_KMS_CONFIG' }),
+  };
 }
 
 async function privyApplication(): Promise<Check> {

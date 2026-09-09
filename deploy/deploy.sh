@@ -22,6 +22,8 @@ if [ -n "$(git status --porcelain)" ]; then
   echo "warning: deploying a dirty tree at $RELEASE_COMMIT" >&2
 fi
 
+read_env() { grep -E "^${1}=" "$env_file" | tail -n 1 | cut -d= -f2- || true; }
+
 # Fail before touching the host when required runtime configuration is absent.
 required=(
   DOMAIN
@@ -33,11 +35,26 @@ required=(
   PRIVY_APP_ID
   PRIVY_APP_SECRET
   PRIVY_VERIFICATION_KEY
-  PRIVY_AUTHORIZATION_KEY_ID
-  PRIVY_AUTHORIZATION_PRIVATE_KEY
   OPENAI_API_KEY
   FACTORY_ADDRESS
 )
+
+# The agent signer provider selects which signer configuration is mandatory.
+signer_provider="$(read_env AGENT_SIGNER_PROVIDER)"
+signer_provider="${signer_provider:-privy}"
+case "$signer_provider" in
+  aws_kms)
+    required+=(AWS_KMS_SIGNER_KEY_ARN AWS_KMS_SIGNER_REGION AWS_KMS_SIGNER_ADDRESS AGENT_MAX_GAS AGENT_MAX_FEE_PER_GAS)
+    ;;
+  privy)
+    required+=(PRIVY_AUTHORIZATION_KEY_ID PRIVY_AUTHORIZATION_PRIVATE_KEY)
+    ;;
+  *)
+    echo "AGENT_SIGNER_PROVIDER must be privy or aws_kms" >&2
+    exit 1
+    ;;
+esac
+
 missing=()
 for name in "${required[@]}"; do
   value="$(grep -E "^${name}=" "$env_file" | tail -n 1 | cut -d= -f2- || true)"

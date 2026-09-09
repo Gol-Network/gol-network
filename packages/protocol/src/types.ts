@@ -13,6 +13,9 @@ export const requestStateSchema = z.enum([
   'queued',
   'needs_clarification',
   'signing',
+  // KMS state machine: a locked nonce plus parsed intent, then the exact signed bytes.
+  'signing_prepared',
+  'signed',
   'submitted',
   'pending',
   'executed',

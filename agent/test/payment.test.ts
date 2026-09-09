@@ -88,8 +88,52 @@ class FakeChain implements PaymentChain {
     return this.receipt;
   }
 
+  async getReceiptIfPresent() {
+    return this.receipt;
+  }
+
   async readRequest() {
     return this.stored;
+  }
+
+  async readActiveMandateId() {
+    return 1n;
+  }
+
+  async readMandate() {
+    return {
+      agent: AGENT,
+      perPaymentCap: 100_000_000n,
+      cumulativeCap: 100_000_000n,
+      spent: 0n,
+      expiresAt: 9_999_999_999n,
+      revoked: false,
+      exists: true,
+    };
+  }
+
+  async nativeBalance() {
+    return 10n ** 18n;
+  }
+
+  async pendingNonce() {
+    return 0;
+  }
+
+  async latestNonce() {
+    return 0;
+  }
+
+  async feeParameters() {
+    return { maxFeePerGas: 2_000_000_000n, maxPriorityFeePerGas: 1_000_000_000n };
+  }
+
+  async estimatePayGas() {
+    return 120_000n;
+  }
+
+  async broadcastRawTransaction() {
+    return { txHash: TX, status: 'accepted' as const };
   }
 }
 

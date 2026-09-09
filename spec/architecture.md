@@ -133,6 +133,13 @@ New request IDs after a refusal create new attempts, as intended. The backend ne
 
 ## 4. Privy control and signing
 
+> **Superseded agent-signer design, 9 September 2026:** Privy remains authoritative for owner
+> authentication and the owner embedded wallet, but the agent signer moves to AWS KMS. The canonical
+> signer, recovery, IAM, migration, UI, and deployment requirements are in the
+> [KMS-backed agent signer specification](kms-backed-agent-signer-spec.md). The Privy agent-policy
+> text below is retained as historical architecture context and must not be implemented as the active
+> Arc signer path.
+
 Owner wallet W owns the GOL account. A second Privy wallet A is owned by the same authenticated user but has a backend additional signer with a policy. The backend signer has no resource ownership or policy-editing credential. Provisioning and changes require user authorization. Per-user account/agent associations are verified server-side and on-chain, never accepted from a model-produced wallet ID. [Privy owner and signer permissions](https://docs.privy.io/controls/authorization-keys/owners/overview)
 
 Policy intent: allow only the signing/broadcast method selected during M0, on chain 5042002, with transaction `to` equal to this GOL account and `value` zero. Every other method defaults to denial, including raw/typed-message signatures, export, delegated authorization, and batched calls. Exact `pay` function filtering using ABI-aware calldata conditions is desirable and tested if used; restricting chain, account, and zero native value is the minimum meaningful policy. Owner-only contract methods remain inaccessible to A regardless of the signer policy.
