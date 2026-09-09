@@ -1,8 +1,12 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
+## Repository Map & Sources of Truth
 
 GOL is a pnpm monorepo. `contracts/` contains Solidity accounts, Foundry tests, and deployment scripts. Shared ABIs, constants, validation, and types live in `packages/protocol/`. `agent/` implements the PostgreSQL journal, model adapter, Privy signer, payment worker, and CLI. `subgraph/` holds The Graph schema, mappings, queries, and Matchstick tests. The Next.js application and API routes are in `web/`; follow the additional instructions in `web/AGENTS.md` when editing that package. Operator tooling lives in `scripts/`: the redacted provider preflight, subgraph preparation, and the live acceptance runner. Operational assets live in `deploy/` and `deployments/`, while product specifications and evidence are under `spec/`. Static images belong in `assets/`.
+
+Source dependencies flow from Solidity contracts into `@gol/protocol`, then into the agent and web packages. The subgraph indexes contract events and the web application combines indexed activity with agent-owned journal data. When a contract interface or event changes, update the Solidity source, protocol ABI/types, subgraph manifest/mappings, and affected agent/web consumers together.
+
+Treat `node_modules/`, `.next/`, `dist/`, `out/`, `cache/`, `broadcast/`, `subgraph/build/`, and `subgraph/generated/` as generated artifacts. Do not hand-edit or use them as architectural sources. Deployment addresses belong in `deployments/`; distinguish checked-in configuration from independently verified live state.
 
 ## Deployment Wallet
 
@@ -31,6 +35,12 @@ TypeScript is ESM and uses two-space indentation, single quotes, semicolons, tra
 ## Testing Guidelines
 
 Place Vitest files in package `test/` or `tests/` directories with `*.test.ts`; name Foundry tests `*.t.sol`. Add regression coverage for policy decisions, idempotency, journal recovery, and API boundary changes. PostgreSQL integration tests require `TEST_DATABASE_URL` and otherwise skip. No numeric coverage threshold is enforced, but CI runs type checks, all workspace tests, web/subgraph builds, contract fuzz/invariant suites, and ARM64 image builds.
+
+Use the narrowest relevant check while iterating, then run all checks affected by the dependency path. Protocol or ABI changes normally require protocol tests plus affected agent, web, contract, and subgraph validation. Documentation-only changes require `pnpm format:check` and `git diff --check`; deployment documentation or Compose changes also require the Compose configuration check.
+
+## Trust Boundaries
+
+Enforce owner mandates before signing or moving value. Preserve refusal and journal records, idempotent payment behavior, exact integer token amounts, and owner revocation. Validate untrusted model, API, database, chain, and environment input at its boundary. Keep server credentials and signing material out of browser bundles and operator output. Never describe proposed or locally tested behavior as deployed without dated operational evidence.
 
 ## Commit & Pull Request Guidelines
 

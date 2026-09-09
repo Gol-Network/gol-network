@@ -1,0 +1,13 @@
+services:
+  web:
+    # The standalone image is production-built, but fixture mode deliberately relaxes provider
+    # requirements until Privy, The Graph, and OpenAI production credentials are provisioned.
+    environment:
+      NODE_ENV: development
+    healthcheck:
+      test:
+        ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3000/').then(r=>{if(!r.ok)process.exit(1)})"]
+
+  worker:
+    # Never run the payment worker with fixture or placeholder signer credentials.
+    profiles: [live]
