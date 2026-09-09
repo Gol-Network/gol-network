@@ -65,7 +65,8 @@ export async function parseInstruction(
 }
 
 function parseDeterministically(text: string, recipients: RecipientLabel[]): ParseResult | null {
-  const match = /^pay\s+([^\s]+)\s+usdc\s+to\s+(.+)$/i.exec(text);
+  // "Pay", "Send", or "Transfer" <amount> USDC to <approved label or address>.
+  const match = /^(?:pay|send|transfer)\s+([^\s]+)\s+usdc\s+to\s+(.+)$/i.exec(text);
   if (!match) return null;
   const amountUsdc = match[1] ?? '';
   const requestedRecipient = (match[2] ?? '').trim();

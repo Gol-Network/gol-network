@@ -568,6 +568,14 @@ function AccountAndMandateControls(props: {
   const agentGas = props.steps.find((entry) => entry.id === 'agent_gas') ?? null;
   const mandateStep = step('mandate');
   const mandate = props.account?.mandate ?? null;
+  const currentAgent = props.account?.agentAddress ?? null;
+  const agentMismatch = Boolean(
+    mandate &&
+    !mandate.revoked &&
+    currentAgent &&
+    mandate.agent &&
+    mandate.agent.toLowerCase() !== currentAgent.toLowerCase(),
+  );
   const prerequisitesReady =
     ownerGas.status === 'complete' &&
     accountStep.status === 'complete' &&
@@ -726,9 +734,33 @@ function AccountAndMandateControls(props: {
             </button>
           </>
         ) : (
-          <p className="control-note">
-            The owner can revoke this mandate at any time. Revocation preserves its payment history.
-          </p>
+          <>
+            {agentMismatch && (
+              <div className="control-callout" data-step="mandate">
+                <div>
+                  <strong>This mandate authorizes a retired signer</strong>
+                  <p>
+                    Mandate #{props.account?.activeMandateId} names{' '}
+                    <code title={mandate!.agent}>{shorten(mandate!.agent)}</code>. The current agent
+                    signer is <code title={currentAgent ?? ''}>{shorten(currentAgent ?? '')}</code>.
+                    Create a new mandate so the agent can execute payments; creating it revokes this
+                    one.
+                  </p>
+                </div>
+                <button
+                  className="primary"
+                  onClick={() => props.onAction('sign_mandate')}
+                  disabled={props.busy !== null}
+                >
+                  Replace mandate <span>→</span>
+                </button>
+              </div>
+            )}
+            <p className="control-note">
+              The owner can revoke this mandate at any time. Revocation preserves its payment
+              history.
+            </p>
+          </>
         )}
         {mandateStep.status !== 'complete' && !prerequisitesReady && (
           <small className="prerequisite-note">

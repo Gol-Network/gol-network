@@ -147,6 +147,16 @@ describe('payment parser', () => {
     );
   });
 
+  it.each(['Send 0.1 USDC to Design contractor', 'transfer 0.1 usdc to Design contractor'])(
+    'accepts "%s" as the same payment verb',
+    async (instruction) => {
+      await expect(parseInstruction(instruction, recipients)).resolves.toEqual({
+        kind: 'payment',
+        intent: { recipient: RECIPIENT, amountUsdc: '0.1' },
+      });
+    },
+  );
+
   it.each([
     'Pay 0 USDC to Design contractor',
     'Pay 1e6 USDC to Design contractor',

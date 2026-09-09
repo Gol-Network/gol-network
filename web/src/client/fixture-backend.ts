@@ -184,6 +184,7 @@ export function createFixtureBackend(config: PublicConfig): GolBackend {
         activeMandateId = '1';
         spent = 0n;
         mandate = {
+          agent: draft.agent,
           perPaymentCapUnits: draft.perPaymentCapUnits,
           cumulativeCapUnits: draft.cumulativeCapUnits,
           spentUnits: '0',

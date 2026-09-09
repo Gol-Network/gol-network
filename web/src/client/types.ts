@@ -16,6 +16,8 @@ export interface AccountBalances {
 }
 
 export interface MandateView {
+  /** The agent address this mandate authorizes. May differ from the current signer after a cutover. */
+  agent: Address;
   perPaymentCapUnits: string;
   cumulativeCapUnits: string;
   spentUnits: string;
