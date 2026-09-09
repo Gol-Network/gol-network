@@ -10,10 +10,12 @@ import {
 } from '@gol/protocol';
 import { decodeFunctionData } from 'viem';
 import { describe, expect, it } from 'vitest';
+import { AuthenticationError } from '@privy-io/node';
 import { parseInstruction } from '../src/payment/parse-instruction.js';
 import { submitPayment } from '../src/payment/submit-payment.js';
 import {
   PaymentIntegrityError,
+  SignerConfigurationError,
   SignerPolicyError,
   type ConfirmedReceipt,
   type PaymentChain,
@@ -21,6 +23,7 @@ import {
   type StoredRequest,
   type TransactionRequest,
 } from '../src/payment/types.js';
+import { classifyPrivySignerError } from '../src/privy/signer.js';
 import {
   agentPolicyDisclosure,
   buildAgentSignerPolicy,
@@ -234,5 +237,21 @@ describe('canonical restricted signer policy', () => {
     for (const rule of policy.rules) {
       expect(rule.name.length).toBeLessThan(PRIVY_POLICY_NAME_MAX_LENGTH);
     }
+  });
+});
+
+describe('Privy signer errors', () => {
+  it('classifies an app chain authorization failure without exposing provider text', () => {
+    const error = new AuthenticationError(
+      401,
+      { error: 'App is not authorized to transact on chain eip155:5042002' },
+      'App is not authorized to transact on chain eip155:5042002',
+      new Headers(),
+    );
+    expect(classifyPrivySignerError(error)).toMatchObject<SignerConfigurationError>({
+      name: 'SignerConfigurationError',
+      code: 'SIGNER_CHAIN_UNAUTHORIZED',
+      message: 'Privy app is not authorized for the configured chain',
+    });
   });
 });

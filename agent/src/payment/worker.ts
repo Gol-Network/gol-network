@@ -9,7 +9,12 @@ import type { JournalRequest } from '../db/journal.js';
 import type { JsonModel } from '../model/types.js';
 import { parseInstruction } from './parse-instruction.js';
 import { reconcilePayment } from './submit-payment.js';
-import { SignerPolicyError, type PaymentChain, type ScopedAgentSigner } from './types.js';
+import {
+  SignerConfigurationError,
+  SignerPolicyError,
+  type PaymentChain,
+  type ScopedAgentSigner,
+} from './types.js';
 
 export interface WorkerContext {
   context: VerifiedAgentContext;
@@ -140,28 +145,47 @@ export class PaymentWorker {
     dependencies: WorkerContext,
     intent: PaymentIntent,
   ): Promise<void> {
+    const { createPaymentTransaction } = await import('./submit-transaction.js');
+    const transaction = createPaymentTransaction(
+      dependencies.context,
+      job.requestId,
+      job.mandateId,
+      intent,
+    );
+    let submission;
     try {
-      const { createPaymentTransaction } = await import('./submit-transaction.js');
-      const transaction = createPaymentTransaction(
-        dependencies.context,
-        job.requestId,
-        job.mandateId,
-        intent,
-      );
-      const submission = await dependencies.signer.sendTransaction(transaction);
-      await this.journal.recordSubmission(
-        job.id,
-        this.workerId,
-        submission.providerOperationId,
-        submission.txHash,
-      );
-      await this.reconcile(job, dependencies, submission.txHash, intent);
+      submission = await dependencies.signer.sendTransaction(transaction);
     } catch (error) {
+      const signerBlocked =
+        error instanceof SignerPolicyError || error instanceof SignerConfigurationError;
+      const errorCode =
+        error instanceof SignerPolicyError || error instanceof SignerConfigurationError
+          ? error.code
+          : 'SUBMISSION_AMBIGUOUS';
+      process.stderr.write(
+        `${JSON.stringify({
+          event: 'payment_submission_failed',
+          requestId: job.requestId,
+          errorCode,
+          errorType: error instanceof Error ? error.name : 'UnknownError',
+        })}\n`,
+      );
       await this.journal.finish(job.id, this.workerId, {
-        state: error instanceof SignerPolicyError ? 'signer_blocked' : 'unknown',
-        errorCode: error instanceof SignerPolicyError ? 'SIGNER_BLOCKED' : 'SUBMISSION_AMBIGUOUS',
+        state: signerBlocked ? 'signer_blocked' : 'unknown',
+        errorCode,
       });
+      return;
     }
+
+    // Once Privy returns a transaction hash, do not relabel later journal failures as an ambiguous
+    // submission. Let the lease expire so recovery replays the same provider idempotency key.
+    await this.journal.recordSubmission(
+      job.id,
+      this.workerId,
+      submission.providerOperationId,
+      submission.txHash,
+    );
+    await this.reconcile(job, dependencies, submission.txHash, intent);
   }
 
   private async reconcile(

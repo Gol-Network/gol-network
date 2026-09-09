@@ -1,7 +1,8 @@
-import { PrivyClient, PermissionDeniedError } from '@privy-io/node';
+import { AuthenticationError, PrivyClient, PermissionDeniedError } from '@privy-io/node';
 import { ARC_TESTNET_CAIP2, type Hex32 } from '@gol/protocol';
 import {
   SignerPolicyError,
+  SignerConfigurationError,
   type ScopedAgentSigner,
   type Submission,
   type TransactionRequest,
@@ -62,9 +63,7 @@ export class PrivyScopedSigner implements ScopedAgentSigner {
         providerOperationId: response.transaction_id ?? null,
       };
     } catch (error) {
-      if (error instanceof PermissionDeniedError)
-        throw new SignerPolicyError('Privy policy denied request');
-      throw error;
+      throw classifyPrivySignerError(error);
     }
   }
 
@@ -79,4 +78,20 @@ export class PrivyScopedSigner implements ScopedAgentSigner {
       providerOperationId: transaction.id,
     };
   }
+}
+
+export function classifyPrivySignerError(error: unknown): unknown {
+  if (error instanceof PermissionDeniedError) {
+    return new SignerPolicyError('Privy policy denied request');
+  }
+  if (
+    error instanceof AuthenticationError &&
+    error.message.includes('App is not authorized to transact on chain')
+  ) {
+    return new SignerConfigurationError(
+      'SIGNER_CHAIN_UNAUTHORIZED',
+      'Privy app is not authorized for the configured chain',
+    );
+  }
+  return error;
 }

@@ -49,7 +49,7 @@ export const PAYMENT_STAGES: Record<PaymentStage, StageCopy> = {
   },
   signer_blocked: {
     label: 'SIGNER BLOCKED',
-    detail: 'The Privy policy denied the request before it was broadcast.',
+    detail: 'The restricted Privy signer rejected the request before it was broadcast.',
     terminal: true,
   },
   technical_failure: {

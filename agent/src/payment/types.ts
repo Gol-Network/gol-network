@@ -53,6 +53,16 @@ export class SignerPolicyError extends Error {
   readonly code = 'SIGNER_BLOCKED';
 }
 
+export class SignerConfigurationError extends Error {
+  readonly code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = 'SignerConfigurationError';
+    this.code = code;
+  }
+}
+
 export class PaymentIntegrityError extends Error {
   readonly code = 'INTEGRITY_MISMATCH';
 }

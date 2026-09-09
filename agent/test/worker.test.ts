@@ -13,6 +13,7 @@ import type {
   StoredRequest,
   TransactionRequest,
 } from '../src/payment/types.js';
+import { SignerConfigurationError } from '../src/payment/types.js';
 import { PaymentWorker, type WorkerContext, type WorkerJournal } from '../src/payment/worker.js';
 
 const ACCOUNT = '0x0000000000000000000000000000000000acc017' as Address;
@@ -81,6 +82,15 @@ class FakeSigner implements ScopedAgentSigner {
     providerOperationId: 'operation-1',
   }));
   getSubmission = vi.fn(async () => ({ txHash: TX, providerOperationId: 'operation-1' }));
+}
+
+class ThrowingSigner extends FakeSigner {
+  constructor(error: Error) {
+    super();
+    this.sendTransaction = vi.fn(async () => {
+      throw error;
+    });
+  }
 }
 
 class FakeChain implements PaymentChain {
@@ -183,5 +193,31 @@ describe('payment worker recovery', () => {
       state: 'unknown',
       errorCode: 'AMBIGUOUS_SIGNING_STATE',
     });
+  });
+
+  it('reports an unauthorized Privy chain as a signer configuration block', async () => {
+    const journal = new FakeJournal(job());
+    const signer = new ThrowingSigner(
+      new SignerConfigurationError(
+        'SIGNER_CHAIN_UNAUTHORIZED',
+        'Privy app is not authorized for the configured chain',
+      ),
+    );
+    await new PaymentWorker('worker-1', journal, { resolve: async () => context(signer) }).tick();
+    expect(journal.finishes.at(-1)).toMatchObject({
+      state: 'signer_blocked',
+      errorCode: 'SIGNER_CHAIN_UNAUTHORIZED',
+    });
+  });
+
+  it('does not hide a post-submission journal failure as an ambiguous provider response', async () => {
+    const journal = new FakeJournal(job());
+    journal.recordSubmission = vi.fn(async () => {
+      throw new Error('LEASE_LOST');
+    });
+    const signer = new FakeSigner();
+    const worker = new PaymentWorker('worker-1', journal, { resolve: async () => context(signer) });
+    await expect(worker.tick()).rejects.toThrow('LEASE_LOST');
+    expect(journal.finishes).toHaveLength(0);
   });
 });
