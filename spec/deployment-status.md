@@ -1,12 +1,13 @@
 # GOL deployment status
 
-Last reviewed: 9 September 2026
+Last reviewed: 10 September 2026
 
 ## Current state
 
 `gol.network` runs the KMS-backed agent signer. The application is live (not fixture mode) at
 `https://gol.network` on the Tokyo EC2 instance `gol-production`, serving source commit
-`4ef2c3f697f41a35c9f02bf2322b073171ffb3e7`. `/api/health` reports
+`a2b4af475d0fba9a0bd09c6b77d39f6455b2716b` (adds the `base:app_id` verification meta tag;
+no runtime or schema change from `4ef2c3f`). `/api/health` reports
 `signer.provider = aws_kms`, `signer.ready = true`, and `ready = true`. The payment worker derives
 the agent address from the production KMS key on startup and refuses to run on any mismatch. The web
 container carries no AWS SDK and no AWS credentials.
