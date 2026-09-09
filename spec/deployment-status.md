@@ -6,7 +6,7 @@ Last reviewed: 9 September 2026
 
 `gol.network` runs the KMS-backed agent signer. The application is live (not fixture mode) at
 `https://gol.network` on the Tokyo EC2 instance `gol-production`, serving source commit
-`68c1521efdb3c2984474719d59d9eebf484c2bcf`. `/api/health` reports
+`30cf569b10a4b0222cc7ee6fceef3377981c4a21`. `/api/health` reports
 `signer.provider = aws_kms`, `signer.ready = true`, and `ready = true`. The payment worker derives
 the agent address from the production KMS key on startup and refuses to run on any mismatch. The web
 container carries no AWS SDK and no AWS credentials.
@@ -54,7 +54,7 @@ Implements [KMS-backed agent signer specification](kms-backed-agent-signer-spec.
       `s3://gol-production-779035457064-ap-northeast-1/postgres/20260909T143142Z-pre-kms-cutover.sql.gz`.
 - [x] Additive schema migration applied on production (idempotent `ALTER TABLE`; `signing_prepared`
       and `signed` states; `account_links` signer_* columns; nullable Privy identifiers).
-- [x] `deploy/deploy.sh` re-run at `RELEASE_COMMIT=68c1521…`; web and worker images rebuilt on
+- [x] `deploy/deploy.sh` re-run at `RELEASE_COMMIT=30cf569…`; web and worker images rebuilt on
       Node 22 ARM64; migration applied; `/api/health` returned 200 with `signer.ready = true`.
 - [x] The single existing `account_links` row (owner `0x6B745CFFD0018d910FA1C00911ebc2fd19933f55`,
       account `0xD7425769803302430B343fAa410c34A3DF9908Af`) was migrated from `privy` to `aws_kms`
