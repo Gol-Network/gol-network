@@ -14,6 +14,9 @@ The acceptance story is deliberately narrow: fund 100 USDC, pay 40 USDC, then re
 
 > Deployment status: local implementation complete, external deployment not performed. [The deployment manifest](deployments/arc-testnet.json) intentionally contains `not_deployed` placeholders until real addresses and receipts exist. Without provider configuration the interface runs an explicitly labeled fixture mode: a mocked provider walkthrough that drives the same interface states as a live payment and is never evidence.
 
+Track the remaining provider provisioning, contract and subgraph deployment, production rollout,
+live acceptance, and submission evidence in [the deployment status checklist](spec/deployment-status.md).
+
 ## Why the controls matter
 
 GOL uses three separate control planes:

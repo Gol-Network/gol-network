@@ -4,6 +4,12 @@
 
 GOL is a pnpm monorepo. `contracts/` contains Solidity accounts, Foundry tests, and deployment scripts. Shared ABIs, constants, validation, and types live in `packages/protocol/`. `agent/` implements the PostgreSQL journal, model adapter, Privy signer, payment worker, and CLI. `subgraph/` holds The Graph schema, mappings, queries, and Matchstick tests. The Next.js application and API routes are in `web/`; follow the additional instructions in `web/AGENTS.md` when editing that package. Operator tooling lives in `scripts/`: the redacted provider preflight, subgraph preparation, and the live acceptance runner. Operational assets live in `deploy/` and `deployments/`, while product specifications and evidence are under `spec/`. Static images belong in `assets/`.
 
+## Deployment Wallet
+
+Use the Foundry keystore account named `gol-deployer`
+(`0xD2DA4968B09401DB75517EF9AcF6A30CdC7dF26F`) for GOL contract deployments. Keep the private key,
+keystore password, and RPC credentials outside the repository; never print, log, or commit them.
+
 ## Build, Test, and Development Commands
 
 Use Node 22 and pnpm 11.17.0.
