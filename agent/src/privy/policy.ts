@@ -11,6 +11,7 @@ import { ARC_TESTNET_CAIP2, ARC_TESTNET_CHAIN_ID, type Address } from '@gol/prot
  * `ethereum_calldata` condition is enabled, so it must never be described as `pay`-only.
  */
 export const AGENT_POLICY_VERSION = '1.0';
+export const PRIVY_POLICY_NAME_MAX_LENGTH = 50;
 
 export type PolicyField = 'chain_id' | 'to' | 'value';
 
@@ -53,7 +54,8 @@ export function buildAgentSignerPolicy(account: Address): AgentSignerPolicy {
     version: AGENT_POLICY_VERSION,
     rules: [
       {
-        name: 'Zero-value transactions to this GOL account on Arc testnet',
+        // Privy rejects rule names at or above 50 characters.
+        name: 'GOL account calls on Arc testnet',
         action: 'ALLOW',
         method: 'eth_sendTransaction',
         conditions: [

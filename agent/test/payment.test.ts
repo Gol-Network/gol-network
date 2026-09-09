@@ -25,6 +25,7 @@ import {
   agentPolicyDisclosure,
   buildAgentSignerPolicy,
   evaluateAgentPolicy,
+  PRIVY_POLICY_NAME_MAX_LENGTH,
 } from '../src/privy/policy.js';
 
 const ACCOUNT = '0x0000000000000000000000000000000000Acc017' as Address;
@@ -225,5 +226,13 @@ describe('canonical restricted signer policy', () => {
       'to',
       'value',
     ]);
+  });
+
+  it('keeps policy and rule names within Privy API limits', () => {
+    expect(policy.name.length).toBeLessThan(PRIVY_POLICY_NAME_MAX_LENGTH);
+    expect(policy.rules).not.toHaveLength(0);
+    for (const rule of policy.rules) {
+      expect(rule.name.length).toBeLessThan(PRIVY_POLICY_NAME_MAX_LENGTH);
+    }
   });
 });

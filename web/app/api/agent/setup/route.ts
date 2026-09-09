@@ -73,18 +73,28 @@ export async function POST(request: Request) {
     const stableKey = createHash('sha256')
       .update(`${session.subject}:${body.account.toLowerCase()}`)
       .digest('hex');
-    const policy = await privy.policies().create({
-      ...buildAgentSignerPolicy(body.account),
-      owner: { user_id: session.subject },
-      idempotency_key: `gol-policy-${stableKey}`,
-    });
-    const wallet = await privy.wallets().create({
-      chain_type: 'ethereum',
-      display_name: 'GOL restricted agent',
-      owner: { user_id: session.subject },
-      additional_signers: [{ signer_id: signerId, override_policy_ids: [policy.id] }],
-      idempotency_key: `gol-wallet-${stableKey}`,
-    });
+    let policy;
+    try {
+      policy = await privy.policies().create({
+        ...buildAgentSignerPolicy(body.account),
+        owner: { user_id: session.subject },
+        idempotency_key: `gol-policy-${stableKey}`,
+      });
+    } catch {
+      throw new HttpError(502, 'PRIVY_POLICY_CREATION_FAILED');
+    }
+    let wallet;
+    try {
+      wallet = await privy.wallets().create({
+        chain_type: 'ethereum',
+        display_name: 'GOL restricted agent',
+        owner: { user_id: session.subject },
+        additional_signers: [{ signer_id: signerId, override_policy_ids: [policy.id] }],
+        idempotency_key: `gol-wallet-${stableKey}`,
+      });
+    } catch {
+      throw new HttpError(502, 'PRIVY_WALLET_CREATION_FAILED');
+    }
     const inserted = await pool.query(
       `INSERT INTO account_links
         (user_subject, owner_address, account_address, agent_wallet_id, agent_address, policy_id)
