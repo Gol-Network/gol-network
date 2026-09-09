@@ -8,7 +8,7 @@ test('capture labeled fixture states', async ({ page }) => {
   test.setTimeout(180_000);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/');
-  await expect(page.getByText('FIXTURE MODE', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Start fixture walkthrough' })).toBeVisible();
   await page.screenshot({
     path: '../assets/screenshots/01-local-preview-setup.png',
     fullPage: true,
@@ -16,16 +16,16 @@ test('capture labeled fixture states', async ({ page }) => {
 
   await page.getByRole('button', { name: 'Start fixture walkthrough' }).click();
   await page.getByRole('button', { name: /^Create GOL account/ }).click();
-  await page.getByRole('button', { name: /Review and provision agent wallet/ }).click();
+  await page.getByRole('button', { name: /Review agent policy/ }).click();
   await page.getByLabel('Approved recipient address').fill(RECIPIENT);
   await page.getByRole('button', { name: /I understand, provision the agent wallet/ }).click();
   await page.getByRole('button', { name: /^Top up agent gas/ }).click();
   await page.getByRole('button', { name: /^Sign transfer/ }).click();
   await page.getByRole('button', { name: /^Fund GOL account/ }).click();
   await page.getByRole('button', { name: /^Sign transfer/ }).click();
-  await page.getByRole('button', { name: /^Review mandate/ }).click();
+  await page.getByRole('button', { name: /^Create mandate/ }).click();
   await page.getByRole('button', { name: /^Sign mandate/ }).click();
-  await expect(page.getByText('SETUP 7 OF 7')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/#1 active/).first()).toBeVisible({ timeout: 30_000 });
 
   await page.getByRole('button', { name: /^Run agent/ }).click();
   await page.getByRole('button', { name: /^Submit request/ }).click();

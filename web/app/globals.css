@@ -42,6 +42,38 @@ main {
   margin: 0 auto;
   padding: 0 54px;
 }
+.auth-gate {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+}
+.auth-card {
+  width: min(520px, 100%);
+  text-align: center;
+  padding: 54px;
+  background: #faf8f2;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 18px 60px rgba(32, 30, 24, 0.07);
+}
+.auth-brand {
+  justify-content: center;
+  margin-bottom: 48px;
+}
+.auth-card h1 {
+  font-size: clamp(42px, 7vw, 62px);
+}
+.auth-card .lede {
+  margin: 22px auto 26px;
+}
+.auth-network {
+  justify-content: center;
+  margin-bottom: 18px;
+}
+.auth-button {
+  width: 100%;
+}
 .topbar {
   height: 86px;
   display: flex;
@@ -728,6 +760,122 @@ footer {
 }
 
 /* Resumable setup checklist */
+.account-controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 22px;
+}
+.account-card,
+.mandate-card,
+.control-callout {
+  padding: 16px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.mandate-card,
+.control-callout {
+  grid-column: 1 / -1;
+}
+.account-card-heading,
+.control-callout {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+.account-card-heading > div,
+.control-callout > div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.account-card-heading > div > span {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.account-card-heading strong {
+  font-size: 16px;
+}
+.account-card .address-chip {
+  margin-top: 13px;
+}
+.wallet-secondary-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 10px;
+}
+.wallet-secondary-row .text-button {
+  width: auto;
+}
+.control-callout p,
+.control-note,
+.prerequisite-note {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.control-callout p,
+.control-note {
+  margin: 4px 0 0;
+}
+.control-note a {
+  color: var(--coral);
+}
+.control-button {
+  width: 100%;
+  margin-top: 14px;
+}
+.prerequisite-note {
+  display: block;
+  margin-top: 9px;
+}
+.warning-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(23, 32, 29, 0.58);
+}
+.warning-dialog {
+  width: min(540px, 100%);
+  padding: 28px;
+  background: #faf8f2;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.24);
+}
+.warning-dialog > p,
+.warning-dialog li {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.warning-dialog ul {
+  padding-left: 20px;
+}
+.warning-dialog .dialog-note {
+  padding: 12px;
+  background: var(--paper);
+  border-left: 3px solid var(--amber);
+}
+.warning-dialog .dialog-error {
+  color: var(--amber);
+}
+.danger-button {
+  background: var(--ink);
+}
 .setup {
   margin: 22px 0 4px;
 }
@@ -1063,6 +1211,17 @@ footer {
 }
 
 @media (max-width: 900px) {
+  .account-controls {
+    grid-template-columns: 1fr;
+  }
+  .account-card,
+  .mandate-card,
+  .control-callout {
+    grid-column: 1;
+  }
+  .control-callout {
+    flex-direction: column;
+  }
   .balances {
     grid-template-columns: 1fr;
   }
@@ -1073,6 +1232,12 @@ footer {
     flex-direction: column;
     align-items: flex-start;
     gap: 6px;
+  }
+}
+
+@media (max-width: 560px) {
+  .auth-card {
+    padding: 38px 24px;
   }
 }
 

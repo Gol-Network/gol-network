@@ -20,28 +20,33 @@ test.describe('mocked provider walkthrough', () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto('/');
 
-    // The mode is unambiguous before anything else happens.
-    await expect(page.getByText('FIXTURE MODE', { exact: true })).toBeVisible();
-    await expect(page.getByRole('heading', { name: /Give the agent a budget/ })).toBeVisible();
+    // Signed-out users see only the authentication gate.
+    await expect(page.getByRole('button', { name: 'Start fixture walkthrough' })).toBeVisible();
+    await expect(page.getByText('FIXTURE MODE', { exact: true })).not.toBeVisible();
 
     await page.getByRole('button', { name: 'Start fixture walkthrough' }).click();
-    await expect(page.getByText('SETUP 2 OF 7')).toBeVisible();
+    await expect(page.getByText('FIXTURE MODE', { exact: true })).toBeVisible();
+    await expect(page.getByText('250 USDC', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Export' })).toBeVisible();
+    await page.getByRole('button', { name: 'Export' }).click();
+    await expect(page.getByRole('dialog')).toContainText('Never share your private key');
+    await expect(page.getByRole('dialog')).toContainText(
+      'GOL smart-contract account itself has no private key',
+    );
+    await page.getByRole('button', { name: 'Cancel' }).click();
 
     // 3. GOL account created and confirmed.
     await completeStep(page, /^Create GOL account/);
-    await expect(page.locator('li[data-step="account"]')).toHaveClass(/complete/, CONFIRMATION);
+    await expect(page.getByText('Connect a restricted agent')).toBeVisible(CONFIRMATION);
 
     // 4. Restricted agent wallet provisioned after an explicit consent review.
-    await page.getByRole('button', { name: /Review and provision agent wallet/ }).click();
+    await page.getByRole('button', { name: /Review agent policy/ }).click();
     const consent = page.getByTestId('agent-consent');
     await expect(consent).toContainText('Denied by default');
     await expect(consent).toContainText('Exactly zero');
     await page.getByLabel('Approved recipient address').fill(RECIPIENT);
     await page.getByRole('button', { name: /I understand, provision the agent wallet/ }).click();
-    await expect(page.locator('li[data-step="agent_wallet"]')).toHaveClass(
-      /complete/,
-      CONFIRMATION,
-    );
+    await expect(page.getByText('Agent gas reserve required')).toBeVisible(CONFIRMATION);
 
     // 5. Agent gas reserve, reviewed then funded separately from the mandate budget.
     await page.getByRole('button', { name: /^Top up agent gas/ }).click();
@@ -49,24 +54,21 @@ test.describe('mocked provider walkthrough', () => {
     await expect(gasReview).toContainText('1 USDC');
     await expect(gasReview).toContainText('outside the mandate');
     await completeStep(page, /^Sign transfer/);
-    await expect(page.locator('li[data-step="agent_gas"]')).toHaveClass(/complete/, CONFIRMATION);
+    await expect(page.getByText('Fund the GOL account')).toBeVisible(CONFIRMATION);
 
     // 6. GOL account funded to exactly the demonstration balance.
     await page.getByRole('button', { name: /^Fund GOL account/ }).click();
     await expect(page.getByTestId('transfer-review')).toContainText('100 USDC');
     await completeStep(page, /^Sign transfer/);
-    await expect(page.locator('li[data-step="account_funded"]')).toHaveClass(
-      /complete/,
-      CONFIRMATION,
-    );
+    await expect(page.getByRole('button', { name: /^Create mandate/ })).toBeEnabled(CONFIRMATION);
 
     // 7. Mandate reviewed before signature.
-    await page.getByRole('button', { name: /^Review mandate/ }).click();
+    await page.getByRole('button', { name: /^Create mandate/ }).click();
     const review = page.getByTestId('mandate-review');
     await expect(review).toContainText('100 USDC');
     await expect(review).toContainText(RECIPIENT);
     await page.getByRole('button', { name: /^Sign mandate/ }).click();
-    await expect(page.getByText('SETUP 7 OF 7')).toBeVisible(CONFIRMATION);
+    await expect(page.getByText(/#1 active/).first()).toBeVisible(CONFIRMATION);
 
     // The 40 USDC payment resolves before submission, then reaches a confirmed outcome.
     await page.getByRole('button', { name: /^Run agent/ }).click();

@@ -6,6 +6,8 @@ export interface RecipientEntry {
 }
 
 export interface AccountBalances {
+  /** ERC-20 USDC held directly by the owner wallet. */
+  ownerUsdcUnits: string;
   /** ERC-20 USDC held by the GOL account and available to pay recipients. */
   accountUsdcUnits: string;
   /** Native Arc gas balances. Never added to the ERC-20 payment balance. */
@@ -168,4 +170,6 @@ export interface AuthState {
   label: string;
   login: () => void;
   logout: () => void;
+  /** Opens Privy's isolated export flow for the owner embedded wallet. */
+  exportWallet?: (address: string) => Promise<void>;
 }

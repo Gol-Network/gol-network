@@ -25,9 +25,15 @@ export async function GET(request: Request) {
     const ownerAddress = String(row.owner_address).trim() as `0x${string}`;
     const agentAddress = String(row.agent_address).trim() as `0x${string}`;
 
-    const [chainOwner, accountUsdc, activeMandateId, ownerGas, agentGas, recipients] =
+    const [chainOwner, ownerUsdc, accountUsdc, activeMandateId, ownerGas, agentGas, recipients] =
       await Promise.all([
         client.readContract({ address: accountAddress, abi: golAccountAbi, functionName: 'owner' }),
+        client.readContract({
+          address: ARC_TESTNET_USDC,
+          abi: erc20Abi,
+          functionName: 'balanceOf',
+          args: [ownerAddress],
+        }),
         client.readContract({
           address: ARC_TESTNET_USDC,
           abi: erc20Abi,
@@ -75,6 +81,7 @@ export async function GET(request: Request) {
       // The native gas view and the ERC-20 payment view describe the same underlying Arc USDC.
       // They are reported separately and must never be added together.
       balances: {
+        ownerUsdcUnits: ownerUsdc.toString(),
         accountUsdcUnits: accountUsdc.toString(),
         ownerGasWei: ownerGas.toString(),
         agentGasWei: agentGas.toString(),

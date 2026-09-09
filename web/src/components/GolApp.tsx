@@ -1,6 +1,6 @@
 'use client';
 
-import { usePrivy, useWallets } from '@privy-io/react-auth';
+import { useExportWallet, usePrivy, useWallets } from '@privy-io/react-auth';
 import {
   addressSchema,
   formatUsdc,
@@ -42,6 +42,7 @@ export function GolApp({ config }: { config: PublicConfig }) {
 function LiveGolApp({ config }: { config: PublicConfig }) {
   const { ready, authenticated, login, logout, user, getAccessToken } = usePrivy();
   const { wallets } = useWallets();
+  const { exportWallet } = useExportWallet();
   const walletsRef = useRef(wallets);
   walletsRef.current = wallets;
   const preferredRef = useRef<string | undefined>(undefined);
@@ -96,6 +97,7 @@ function LiveGolApp({ config }: { config: PublicConfig }) {
     label: authenticated ? 'Signed in' : 'Sign in with Privy',
     login,
     logout,
+    exportWallet: async (address) => exportWallet({ address }),
   };
   return (
     <GolExperience
@@ -117,6 +119,7 @@ function FixtureGolApp({ config }: { config: PublicConfig }) {
     label: started ? 'Fixture owner' : 'Start fixture walkthrough',
     login: () => setStarted(true),
     logout: () => setStarted(false),
+    exportWallet: async () => undefined,
   };
   return (
     <GolExperience config={config} auth={auth} backend={backendRef.current} enabled={started} />

@@ -19,7 +19,7 @@ import type {
   TransactionState,
 } from '@/client/types';
 import type { PaymentView } from './GolApp';
-import { nextIncompleteStep, type SetupStep } from './setup-steps';
+import type { SetupStep } from './setup-steps';
 
 export interface TransferReview {
   kind: 'fund_agent_gas' | 'fund_account';
@@ -78,11 +78,12 @@ export interface DashboardProps {
 export function Dashboard(props: DashboardProps) {
   const { config, account } = props;
   const [filter, setFilter] = useState<TimelineFilter>('ALL');
+  const [exportWarningOpen, setExportWarningOpen] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const mandate = account?.mandate ?? null;
   const cap = mandate?.cumulativeCapUnits ?? config.accountTargetUnits;
   const spent = mandate?.spentUnits ?? '0';
   const remaining = BigInt(cap) - BigInt(spent);
-  const next = nextIncompleteStep(props.steps);
 
   const source =
     props.page && props.page.freshness !== 'unavailable' ? props.page : props.lastGoodPage;
@@ -91,6 +92,10 @@ export function Dashboard(props: DashboardProps) {
     [source, props.pending],
   );
   const visible = useMemo(() => filterTimeline(entries, filter), [entries, filter]);
+
+  if (!props.auth.authenticated) {
+    return <SignInGate config={config} auth={props.auth} />;
+  }
 
   return (
     <main>
@@ -166,18 +171,19 @@ export function Dashboard(props: DashboardProps) {
           <div className="panel-heading">
             <div>
               <p className="kicker">OWNER CONTROL</p>
-              <h2>{mandate && !mandate.revoked ? 'Active mandate' : 'Owner setup'}</h2>
+              <h2>Accounts and mandate</h2>
             </div>
             <span className={`status ${mandate && !mandate.revoked ? 'active' : 'refused'}`}>
               {mandate && !mandate.revoked ? 'Active' : 'Setup required'}
             </span>
           </div>
 
-          <SetupChecklist
+          <AccountAndMandateControls
             steps={props.steps}
             busy={props.busy}
-            next={next}
             config={config}
+            account={account}
+            onExport={() => setExportWarningOpen(true)}
             onAction={(action) => {
               if (action === 'create_account') props.onCreateAccount();
               if (action === 'provision_agent') props.setConsentOpen(true);
@@ -218,6 +224,22 @@ export function Dashboard(props: DashboardProps) {
           )}
 
           <TransactionStatus tx={props.tx} config={config} />
+
+          {exportWarningOpen && account?.ownerAddress && (
+            <PrivateKeyWarning
+              onCancel={() => setExportWarningOpen(false)}
+              onContinue={async () => {
+                setExportError(null);
+                try {
+                  await props.auth.exportWallet?.(account.ownerAddress);
+                  setExportWarningOpen(false);
+                } catch (error) {
+                  setExportError(error instanceof Error ? error.message : 'Wallet export failed.');
+                }
+              }}
+              error={exportError}
+            />
+          )}
 
           <Identities config={config} account={account} />
           <Balances config={config} account={account} />
@@ -490,60 +512,263 @@ function canRun(props: DashboardProps): boolean {
   return PAYMENT_STAGES[stage].terminal;
 }
 
-function SetupChecklist(props: {
+function SignInGate({ config, auth }: Pick<DashboardProps, 'config' | 'auth'>) {
+  return (
+    <main className="auth-gate">
+      <section className="auth-card">
+        <a className="brand auth-brand" href="#signin">
+          <span className="brand-mark">G</span>
+          <span>GOL</span>
+        </a>
+        <p className="eyebrow">CONTROLLED AGENT PAYMENTS</p>
+        <h1>Keep the authority.</h1>
+        <p className="lede">
+          Sign in to view your wallet, GOL account, mandates, and indexed payment activity.
+        </p>
+        <span className="network auth-network">
+          <i /> {config.chainName}
+        </span>
+        <button
+          id="signin"
+          className="primary auth-button"
+          onClick={() => auth.login()}
+          disabled={!auth.ready}
+        >
+          {auth.ready ? auth.label : 'Initializing Privy…'} <span>→</span>
+        </button>
+      </section>
+    </main>
+  );
+}
+
+function AccountAndMandateControls(props: {
   steps: SetupStep[];
   busy: OwnerActionKind | null;
-  next: SetupStep | null;
   config: PublicConfig;
+  account: AccountSnapshot | null;
+  onExport: () => void;
   onAction: (action: OwnerActionKind) => void;
 }) {
-  const complete = props.steps.filter((step) => step.status === 'complete').length;
+  const step = (id: SetupStep['id']) => props.steps.find((entry) => entry.id === id)!;
+  const ownerGas = step('owner_gas');
+  const accountStep = step('account');
+  const agentStep = step('agent_wallet');
+  const agentGas = step('agent_gas');
+  const funding = step('account_funded');
+  const mandateStep = step('mandate');
+  const mandate = props.account?.mandate ?? null;
+  const prerequisitesReady =
+    ownerGas.status === 'complete' &&
+    accountStep.status === 'complete' &&
+    agentStep.status === 'complete' &&
+    agentGas.status === 'complete' &&
+    funding.status === 'complete';
+
   return (
-    <div className="setup">
-      <div className="setup-progress">
-        <span>
-          SETUP {complete} OF {props.steps.length}
-        </span>
-        <div className="setup-bar">
-          <i style={{ width: `${(complete / props.steps.length) * 100}%` }} />
+    <div className="account-controls">
+      <div className="account-card">
+        <div className="account-card-heading">
+          <div>
+            <span>Privy owner wallet</span>
+            <strong>
+              {formatUsdc(BigInt(props.account?.balances.ownerUsdcUnits ?? '0'))} USDC
+            </strong>
+          </div>
+          <span className={`status ${ownerGas.status === 'complete' ? 'active' : 'refused'}`}>
+            {ownerGas.status === 'complete' ? 'Gas ready' : 'Gas required'}
+          </span>
         </div>
-      </div>
-      <ol className="setup-steps">
-        {props.steps.map((step, index) => (
-          <li key={step.id} className={step.status} data-step={step.id}>
-            <span className="setup-index">{step.status === 'complete' ? '✓' : index + 1}</span>
-            <div>
-              <strong>{step.title}</strong>
-              <p>{step.detail}</p>
-              {step.status === 'blocked' && step.id === 'owner_gas' && props.config.faucetUrl && (
-                <a href={props.config.faucetUrl} target="_blank" rel="noreferrer">
-                  Open the configured Arc faucet ↗
-                </a>
-              )}
-              {step.status === 'current' && step.action && step.actionLabel && (
-                <button
-                  className="primary setup-button"
-                  onClick={() => props.onAction(step.action!)}
-                  disabled={props.busy !== null}
-                >
-                  {props.busy === step.action ? 'Waiting for confirmation…' : step.actionLabel}
-                  <span>→</span>
-                </button>
-              )}
+        {props.account?.ownerAddress && (
+          <>
+            <AddressChip config={props.config} value={props.account.ownerAddress} />
+            <div className="wallet-secondary-row">
+              <span>
+                Arc gas: {formatNativeGas(BigInt(props.account.balances.ownerGasWei))} USDC
+              </span>
+              <button className="text-button" onClick={props.onExport} type="button">
+                Export
+              </button>
             </div>
-            <span className="setup-status">{statusWord(step.status)}</span>
-          </li>
-        ))}
-      </ol>
+          </>
+        )}
+        {ownerGas.status !== 'complete' && (
+          <p className="control-note">
+            Account and mandate transactions require sufficient Arc gas.
+            {props.config.faucetUrl && (
+              <>
+                {' '}
+                <a href={props.config.faucetUrl} target="_blank" rel="noreferrer">
+                  Open faucet ↗
+                </a>
+              </>
+            )}
+          </p>
+        )}
+      </div>
+
+      <div className="account-card" data-step="account">
+        <div className="account-card-heading">
+          <div>
+            <span>GOL account</span>
+            <strong>
+              {formatUsdc(BigInt(props.account?.balances.accountUsdcUnits ?? '0'))} USDC
+            </strong>
+          </div>
+          <span className={`status ${props.account?.accountAddress ? 'active' : 'refused'}`}>
+            {props.account?.accountAddress ? 'Created' : 'Not created'}
+          </span>
+        </div>
+        {props.account?.accountAddress ? (
+          <AddressChip config={props.config} value={props.account.accountAddress} />
+        ) : (
+          <button
+            className="primary control-button"
+            onClick={() => props.onAction('create_account')}
+            disabled={ownerGas.status !== 'complete' || props.busy !== null}
+          >
+            {props.busy === 'create_account' ? 'Waiting for confirmation…' : 'Create GOL account'}
+            <span>→</span>
+          </button>
+        )}
+      </div>
+
+      {accountStep.status === 'complete' && agentStep.status !== 'complete' && (
+        <div className="control-callout" data-step="agent_wallet">
+          <div>
+            <strong>Connect a restricted agent</strong>
+            <p>Provision the separate signer and choose its approved recipient.</p>
+          </div>
+          <button
+            className="secondary"
+            onClick={() => props.onAction('provision_agent')}
+            disabled={props.busy !== null}
+          >
+            Review agent policy
+          </button>
+        </div>
+      )}
+
+      {agentStep.status === 'complete' && agentGas.status !== 'complete' && (
+        <div className="control-callout" data-step="agent_gas">
+          <div>
+            <strong>Agent gas reserve required</strong>
+            <p>This top-up is separate from the mandate budget.</p>
+          </div>
+          <button
+            className="secondary"
+            onClick={() => props.onAction('fund_agent_gas')}
+            disabled={props.busy !== null}
+          >
+            Top up agent gas
+          </button>
+        </div>
+      )}
+
+      {agentGas.status === 'complete' && funding.status !== 'complete' && (
+        <div className="control-callout" data-step="account_funded">
+          <div>
+            <strong>Fund the GOL account</strong>
+            <p>Transfer the amount needed to reach the demonstration balance.</p>
+          </div>
+          <button
+            className="secondary"
+            onClick={() => props.onAction('fund_account')}
+            disabled={props.busy !== null}
+          >
+            Fund GOL account
+          </button>
+        </div>
+      )}
+
+      <div className="mandate-card" data-step="mandate">
+        <div className="account-card-heading">
+          <div>
+            <span>Mandate</span>
+            <strong>
+              {mandate && !mandate.revoked
+                ? `#${props.account?.activeMandateId} active`
+                : mandate?.revoked
+                  ? `#${props.account?.activeMandateId} revoked`
+                  : 'No active mandate'}
+            </strong>
+          </div>
+          <span className={`status ${mandate && !mandate.revoked ? 'active' : 'refused'}`}>
+            {mandate && !mandate.revoked ? 'Active' : 'Inactive'}
+          </span>
+        </div>
+        {!mandate || mandate.revoked ? (
+          <>
+            <p className="control-note">
+              Creating a mandate requires a funded GOL account, restricted agent, and enough owner
+              gas. Mandates can be revoked by the owner at any time.
+            </p>
+            <button
+              className="primary control-button"
+              onClick={() => props.onAction('sign_mandate')}
+              disabled={!prerequisitesReady || props.busy !== null}
+            >
+              Create mandate <span>→</span>
+            </button>
+          </>
+        ) : (
+          <p className="control-note">
+            The owner can revoke this mandate at any time. Revocation preserves its payment history.
+          </p>
+        )}
+        {mandateStep.status !== 'complete' && !prerequisitesReady && (
+          <small className="prerequisite-note">
+            Complete the account requirements above first.
+          </small>
+        )}
+      </div>
     </div>
   );
 }
 
-function statusWord(status: SetupStep['status']): string {
-  if (status === 'complete') return 'DONE';
-  if (status === 'current') return 'NEXT';
-  if (status === 'blocked') return 'BLOCKED';
-  return 'WAITING';
+function PrivateKeyWarning(props: {
+  onCancel: () => void;
+  onContinue: () => Promise<void>;
+  error: string | null;
+}) {
+  return (
+    <div className="warning-backdrop" role="presentation">
+      <section
+        className="warning-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="private-key-warning-title"
+      >
+        <p className="kicker">SENSITIVE WALLET EXPORT</p>
+        <h2 id="private-key-warning-title">Never share your private key</h2>
+        <p>
+          Anyone with this key can control your owner wallet, revoke or create mandates, and
+          withdraw funds from your GOL account. GOL cannot recover stolen funds.
+        </p>
+        <ul>
+          <li>Make sure nobody can see or record your screen.</li>
+          <li>Never paste the key into a website, message, or support chat.</li>
+          <li>Store it offline in a secure location.</li>
+        </ul>
+        <p className="dialog-note">
+          Privy displays the owner wallet key in its isolated export flow. GOL never receives it.
+          The GOL smart-contract account itself has no private key.
+        </p>
+        {props.error && <p className="dialog-error">{props.error}</p>}
+        <div className="review-actions">
+          <button className="secondary" onClick={props.onCancel} type="button">
+            Cancel
+          </button>
+          <button
+            className="primary danger-button"
+            onClick={() => void props.onContinue()}
+            type="button"
+          >
+            I understand, continue to Privy
+          </button>
+        </div>
+      </section>
+    </div>
+  );
 }
 
 function ConsentPanel(props: {

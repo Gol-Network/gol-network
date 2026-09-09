@@ -51,8 +51,9 @@ export function createLiveBackend(dependencies: LiveBackendDependencies): GolBac
         })
       : ZERO;
     const accountAddress = account !== ZERO ? (account as Address) : null;
-    const [ownerGas, accountUsdc, activeMandateId] = await Promise.all([
+    const [ownerGas, ownerUsdc, accountUsdc, activeMandateId] = await Promise.all([
       readNativeGas(config, owner),
+      readAccountUsdc(config, owner),
       accountAddress ? readAccountUsdc(config, accountAddress) : Promise.resolve(0n),
       accountAddress
         ? publicClientFor(config).readContract({
@@ -71,6 +72,7 @@ export function createLiveBackend(dependencies: LiveBackendDependencies): GolBac
       policyDisclosure: null,
       recipients: [],
       balances: {
+        ownerUsdcUnits: ownerUsdc.toString(),
         accountUsdcUnits: accountUsdc.toString(),
         ownerGasWei: ownerGas.toString(),
         agentGasWei: '0',
@@ -98,6 +100,7 @@ export function createLiveBackend(dependencies: LiveBackendDependencies): GolBac
             ?.disclosure as AccountSnapshot['policyDisclosure']) ?? null,
         recipients: (value.recipients as AccountSnapshot['recipients']) ?? [],
         balances: {
+          ownerUsdcUnits: balances?.ownerUsdcUnits ?? '0',
           accountUsdcUnits: balances?.accountUsdcUnits ?? '0',
           ownerGasWei: balances?.ownerGasWei ?? '0',
           agentGasWei: balances?.agentGasWei ?? '0',

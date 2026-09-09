@@ -109,6 +109,7 @@ export function createFixtureBackend(config: PublicConfig): GolBackend {
         : null,
       recipients: agentProvisioned ? [{ address: RECIPIENT, label: config.recipientLabel }] : [],
       balances: {
+        ownerUsdcUnits: (250n * 10n ** 6n).toString(),
         accountUsdcUnits: accountUsdc.toString(),
         // The fixture owner starts with enough native gas to complete the checklist.
         ownerGasWei: (5n * 10n ** 18n).toString(),
