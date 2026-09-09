@@ -803,6 +803,11 @@ footer {
 .account-card .address-chip {
   margin-top: 13px;
 }
+.account-balance-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
 .wallet-secondary-row {
   display: flex;
   align-items: center;
@@ -1000,6 +1005,18 @@ footer {
 .review code {
   font-size: 11px;
   word-break: break-all;
+}
+.review label {
+  display: block;
+  margin: 10px 0 8px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.compact-input {
+  padding: 7px 9px;
 }
 .review-actions,
 .resolved-actions {

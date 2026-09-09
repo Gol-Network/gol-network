@@ -426,19 +426,29 @@ function GolExperience({
     });
   }
 
-  function onReviewAccountFunding() {
+  function onReviewAccountFunding(amountUnits: string) {
     const current = accountRef.current;
     if (!current?.accountAddress) return;
-    const target = BigInt(config.accountTargetUnits);
-    const held = BigInt(current.balances.accountUsdcUnits);
-    if (held >= target) return;
     setTransferReview({
       kind: 'fund_account',
-      title: 'Fund the GOL account',
+      title: 'Deposit to the GOL account',
       destination: current.accountAddress,
       destinationLabel: 'GOL account',
-      amountUnits: (target - held).toString(),
-      note: `Only the difference needed to reach the ${formatUsdc(target)} USDC demonstration balance is transferred.`,
+      amountUnits,
+      note: 'This amount will be transferred from the owner wallet to the GOL account.',
+    });
+  }
+
+  function onReviewWithdraw(amountUnits: string) {
+    const current = accountRef.current;
+    if (!current?.accountAddress) return;
+    setTransferReview({
+      kind: 'withdraw',
+      title: 'Withdraw from the GOL account',
+      destination: current.ownerAddress,
+      destinationLabel: 'Owner wallet',
+      amountUnits,
+      note: 'The GOL account contract sends this amount only to its immutable owner wallet.',
     });
   }
 
@@ -448,11 +458,15 @@ function GolExperience({
     if (!current || !review) return;
     setTransferReview(null);
     const units = BigInt(review.amountUnits);
-    await runOwnerAction(review.kind, async (reporter) =>
-      review.kind === 'fund_agent_gas'
-        ? backend.fundAgentGas(review.destination as Address, units, reporter)
-        : backend.fundAccount(review.destination as Address, units, reporter),
-    );
+    await runOwnerAction(review.kind, async (reporter) => {
+      if (review.kind === 'fund_agent_gas') {
+        return backend.fundAgentGas(review.destination as Address, units, reporter);
+      }
+      if (review.kind === 'withdraw') {
+        return backend.withdraw(current.accountAddress!, units, reporter);
+      }
+      return backend.fundAccount(review.destination as Address, units, reporter);
+    });
   }
 
   function onReviewMandate() {
@@ -484,16 +498,6 @@ function GolExperience({
     if (!current?.accountAddress || current.activeMandateId === '0') return;
     await runOwnerAction('revoke_mandate', async (reporter) =>
       backend.revokeMandate(current.accountAddress!, current.activeMandateId, reporter),
-    );
-  }
-
-  async function onWithdraw() {
-    const current = accountRef.current;
-    if (!current?.accountAddress) return;
-    const units = BigInt(current.balances.accountUsdcUnits);
-    if (units === 0n) return;
-    await runOwnerAction('withdraw', async (reporter) =>
-      backend.withdraw(current.accountAddress!, units, reporter),
     );
   }
 
@@ -606,13 +610,13 @@ function GolExperience({
     onProvisionAgent: () => void onProvisionAgent(),
     onReviewAgentGas,
     onReviewAccountFunding,
+    onReviewWithdraw,
     transferReview,
     setTransferReview,
     onConfirmTransfer: () => void onConfirmTransfer(),
     onReviewMandate,
     onSignMandate: () => void onSignMandate(),
     onRevoke: () => void onRevoke(),
-    onWithdraw: () => void onWithdraw(),
     instruction,
     setInstruction,
     preview,

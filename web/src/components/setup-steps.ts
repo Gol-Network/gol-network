@@ -2,13 +2,7 @@ import type { PublicConfig } from '@/config';
 import type { AccountSnapshot, OwnerActionKind } from '@/client/types';
 
 export type StepId =
-  | 'authenticated'
-  | 'owner_gas'
-  | 'account'
-  | 'agent_wallet'
-  | 'agent_gas'
-  | 'account_funded'
-  | 'mandate';
+  'authenticated' | 'owner_gas' | 'account' | 'agent_wallet' | 'agent_gas' | 'mandate';
 
 export type StepStatus = 'complete' | 'current' | 'blocked' | 'todo';
 
@@ -39,12 +33,6 @@ export function deriveSteps(input: {
   const agentReady = Boolean(account?.agentAddress);
   const agentGasReady =
     Boolean(balances) && BigInt(balances!.agentGasWei) >= BigInt(config.minAgentGasWei);
-  // The account was funded to the target when its remaining balance plus everything the mandate
-  // has already spent reaches it. A completed payment must not reopen the funding step.
-  const fundedReady =
-    Boolean(balances) &&
-    BigInt(balances!.accountUsdcUnits) + BigInt(account?.mandate?.spentUnits ?? '0') >=
-      BigInt(config.accountTargetUnits);
   const mandateReady =
     Boolean(account) && account!.activeMandateId !== '0' && account!.mandate?.revoked === false;
 
@@ -107,16 +95,6 @@ export function deriveSteps(input: {
       complete: agentGasReady,
       action: 'fund_agent_gas',
       actionLabel: 'Top up agent gas',
-    },
-    {
-      id: 'account_funded',
-      title: 'GOL account funded and confirmed',
-      detail: fundedReady
-        ? 'The account holds the exact demonstration balance.'
-        : 'Transfer only the difference needed to reach the demonstration balance.',
-      complete: fundedReady,
-      action: 'fund_account',
-      actionLabel: 'Fund GOL account',
     },
     {
       id: 'mandate',

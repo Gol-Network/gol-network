@@ -1,6 +1,12 @@
 'use client';
 
-import { formatNativeGas, formatUsdc, type ActivityPage, type GroundedAnswer } from '@gol/protocol';
+import {
+  formatNativeGas,
+  formatUsdc,
+  parseUsdc,
+  type ActivityPage,
+  type GroundedAnswer,
+} from '@gol/protocol';
 import { useMemo, useState, type FormEvent } from 'react';
 import { explorerAddressUrl, explorerTxUrl, type PublicConfig } from '@/config';
 import { PAYMENT_STAGES, TRANSACTION_PHASES } from '@/client/stages';
@@ -22,7 +28,7 @@ import type { PaymentView } from './GolApp';
 import type { SetupStep } from './setup-steps';
 
 export interface TransferReview {
-  kind: 'fund_agent_gas' | 'fund_account';
+  kind: 'fund_agent_gas' | 'fund_account' | 'withdraw';
   title: string;
   destination: string;
   destinationLabel: string;
@@ -47,14 +53,14 @@ export interface DashboardProps {
   onCreateAccount: () => void;
   onProvisionAgent: () => void;
   onReviewAgentGas: () => void;
-  onReviewAccountFunding: () => void;
+  onReviewAccountFunding: (amountUnits: string) => void;
   transferReview: TransferReview | null;
   setTransferReview: (value: TransferReview | null) => void;
   onConfirmTransfer: () => void;
   onReviewMandate: () => void;
   onSignMandate: () => void;
   onRevoke: () => void;
-  onWithdraw: () => void;
+  onReviewWithdraw: (amountUnits: string) => void;
   instruction: string;
   setInstruction: (value: string) => void;
   preview: InstructionPreview | null;
@@ -80,6 +86,7 @@ export function Dashboard(props: DashboardProps) {
   const [filter, setFilter] = useState<TimelineFilter>('ALL');
   const [exportWarningOpen, setExportWarningOpen] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [balanceAction, setBalanceAction] = useState<'deposit' | 'withdraw' | null>(null);
   const mandate = account?.mandate ?? null;
   const cap = mandate?.cumulativeCapUnits ?? config.accountTargetUnits;
   const spent = mandate?.spentUnits ?? '0';
@@ -188,7 +195,8 @@ export function Dashboard(props: DashboardProps) {
               if (action === 'create_account') props.onCreateAccount();
               if (action === 'provision_agent') props.setConsentOpen(true);
               if (action === 'fund_agent_gas') props.onReviewAgentGas();
-              if (action === 'fund_account') props.onReviewAccountFunding();
+              if (action === 'fund_account') setBalanceAction('deposit');
+              if (action === 'withdraw') setBalanceAction('withdraw');
               if (action === 'sign_mandate') props.onReviewMandate();
             }}
           />
@@ -214,9 +222,23 @@ export function Dashboard(props: DashboardProps) {
             />
           )}
 
+          {balanceAction && account?.accountAddress && (
+            <AmountEntryPanel
+              action={balanceAction}
+              availableUnits={account.balances.accountUsdcUnits}
+              onCancel={() => setBalanceAction(null)}
+              onConfirm={(amountUnits) => {
+                setBalanceAction(null);
+                if (balanceAction === 'deposit') props.onReviewAccountFunding(amountUnits);
+                else props.onReviewWithdraw(amountUnits);
+              }}
+            />
+          )}
+
           {props.mandateReview && (
             <MandateReviewPanel
               draft={props.mandateReview}
+              onChange={props.setMandateReview}
               onCancel={() => props.setMandateReview(null)}
               onConfirm={props.onSignMandate}
               disabled={props.busy !== null}
@@ -268,17 +290,6 @@ export function Dashboard(props: DashboardProps) {
               disabled={!mandate || mandate.revoked || props.busy !== null}
             >
               Revoke mandate
-            </button>
-            <button
-              className="secondary"
-              onClick={props.onWithdraw}
-              disabled={
-                !account?.accountAddress ||
-                BigInt(account.balances.accountUsdcUnits) === 0n ||
-                props.busy !== null
-              }
-            >
-              Withdraw
             </button>
           </div>
           <p className="hint">
@@ -554,15 +565,13 @@ function AccountAndMandateControls(props: {
   const accountStep = step('account');
   const agentStep = step('agent_wallet');
   const agentGas = step('agent_gas');
-  const funding = step('account_funded');
   const mandateStep = step('mandate');
   const mandate = props.account?.mandate ?? null;
   const prerequisitesReady =
     ownerGas.status === 'complete' &&
     accountStep.status === 'complete' &&
     agentStep.status === 'complete' &&
-    agentGas.status === 'complete' &&
-    funding.status === 'complete';
+    agentGas.status === 'complete';
 
   return (
     <div className="account-controls">
@@ -619,7 +628,27 @@ function AccountAndMandateControls(props: {
           </span>
         </div>
         {props.account?.accountAddress ? (
-          <AddressChip config={props.config} value={props.account.accountAddress} />
+          <>
+            <AddressChip config={props.config} value={props.account.accountAddress} />
+            <div className="account-balance-actions">
+              <button
+                className="secondary"
+                onClick={() => props.onAction('fund_account')}
+                disabled={props.busy !== null}
+              >
+                Deposit
+              </button>
+              <button
+                className="secondary"
+                onClick={() => props.onAction('withdraw')}
+                disabled={
+                  props.busy !== null || BigInt(props.account.balances.accountUsdcUnits) === 0n
+                }
+              >
+                Withdraw
+              </button>
+            </div>
+          </>
         ) : (
           <button
             className="primary control-button"
@@ -664,22 +693,6 @@ function AccountAndMandateControls(props: {
         </div>
       )}
 
-      {agentGas.status === 'complete' && funding.status !== 'complete' && (
-        <div className="control-callout" data-step="account_funded">
-          <div>
-            <strong>Fund the GOL account</strong>
-            <p>Transfer the amount needed to reach the demonstration balance.</p>
-          </div>
-          <button
-            className="secondary"
-            onClick={() => props.onAction('fund_account')}
-            disabled={props.busy !== null}
-          >
-            Fund GOL account
-          </button>
-        </div>
-      )}
-
       <div className="mandate-card" data-step="mandate">
         <div className="account-card-heading">
           <div>
@@ -699,8 +712,9 @@ function AccountAndMandateControls(props: {
         {!mandate || mandate.revoked ? (
           <>
             <p className="control-note">
-              Creating a mandate requires a funded GOL account, restricted agent, and enough owner
-              gas. Mandates can be revoked by the owner at any time.
+              Creating a mandate requires a restricted agent and enough owner gas. The account may
+              be funded before or after the mandate is created; the owner wallet pays the creation
+              transaction gas.
             </p>
             <button
               className="primary control-button"
@@ -822,6 +836,64 @@ function ConsentPanel(props: {
   );
 }
 
+function AmountEntryPanel(props: {
+  action: 'deposit' | 'withdraw';
+  availableUnits: string;
+  onCancel: () => void;
+  onConfirm: (amountUnits: string) => void;
+}) {
+  const [amount, setAmount] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const isWithdraw = props.action === 'withdraw';
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    try {
+      const units = parseUsdc(amount);
+      if (isWithdraw && units > BigInt(props.availableUnits)) {
+        setError('The withdrawal amount exceeds the GOL account balance.');
+        return;
+      }
+      props.onConfirm(units.toString());
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Enter a valid USDC amount.');
+    }
+  }
+
+  return (
+    <form className="review" data-testid="amount-entry" onSubmit={submit}>
+      <p className="kicker">
+        {isWithdraw ? 'WITHDRAW FROM GOL ACCOUNT' : 'DEPOSIT TO GOL ACCOUNT'}
+      </p>
+      <label htmlFor="account-amount">Amount (USDC)</label>
+      <input
+        id="account-amount"
+        className="setup-input"
+        inputMode="decimal"
+        autoFocus
+        placeholder="0.00"
+        value={amount}
+        onChange={(event) => {
+          setAmount(event.target.value);
+          setError(null);
+        }}
+      />
+      {isWithdraw && (
+        <p className="control-note">Available: {formatUsdc(BigInt(props.availableUnits))} USDC</p>
+      )}
+      {error && <p className="dialog-error">{error}</p>}
+      <div className="review-actions">
+        <button className="secondary" onClick={props.onCancel} type="button">
+          Cancel
+        </button>
+        <button className="primary" type="submit">
+          Review {props.action} <span>→</span>
+        </button>
+      </div>
+    </form>
+  );
+}
+
 /** Shows the exact destination and amount before an owner is asked to sign a transfer. */
 function TransferReviewPanel(props: {
   review: TransferReview;
@@ -858,10 +930,40 @@ function TransferReviewPanel(props: {
 
 function MandateReviewPanel(props: {
   draft: MandateDraft;
+  onChange: (draft: MandateDraft) => void;
   onCancel: () => void;
   onConfirm: () => void;
   disabled: boolean;
 }) {
+  const [perPaymentCap, setPerPaymentCap] = useState(
+    formatUsdc(BigInt(props.draft.perPaymentCapUnits)),
+  );
+  const [cumulativeCap, setCumulativeCap] = useState(
+    formatUsdc(BigInt(props.draft.cumulativeCapUnits)),
+  );
+  const [error, setError] = useState<string | null>(null);
+
+  function updateCaps(perPayment: string, cumulative: string) {
+    setPerPaymentCap(perPayment);
+    setCumulativeCap(cumulative);
+    setError(null);
+    try {
+      const perPaymentUnits = parseUsdc(perPayment);
+      const cumulativeUnits = parseUsdc(cumulative);
+      if (perPaymentUnits > cumulativeUnits) {
+        setError('The per-payment cap cannot exceed the cumulative cap.');
+        return;
+      }
+      props.onChange({
+        ...props.draft,
+        perPaymentCapUnits: perPaymentUnits.toString(),
+        cumulativeCapUnits: cumulativeUnits.toString(),
+      });
+    } catch {
+      setError('Use positive USDC amounts with at most six decimals.');
+    }
+  }
+
   return (
     <div className="review" data-testid="mandate-review">
       <p className="kicker">REVIEW BEFORE SIGNATURE</p>
@@ -871,9 +973,25 @@ function MandateReviewPanel(props: {
           <code>{props.draft.agent}</code>
         </dd>
         <dt>Per-payment cap</dt>
-        <dd>{formatUsdc(BigInt(props.draft.perPaymentCapUnits))} USDC</dd>
+        <dd>
+          <input
+            aria-label="Per-payment cap (USDC)"
+            className="setup-input compact-input"
+            inputMode="decimal"
+            value={perPaymentCap}
+            onChange={(event) => updateCaps(event.target.value, cumulativeCap)}
+          />
+        </dd>
         <dt>Cumulative cap</dt>
-        <dd>{formatUsdc(BigInt(props.draft.cumulativeCapUnits))} USDC</dd>
+        <dd>
+          <input
+            aria-label="Cumulative cap (USDC)"
+            className="setup-input compact-input"
+            inputMode="decimal"
+            value={cumulativeCap}
+            onChange={(event) => updateCaps(perPaymentCap, event.target.value)}
+          />
+        </dd>
         <dt>Approved recipient</dt>
         <dd>
           {props.draft.recipientLabel} <code>{props.draft.recipient}</code>
@@ -881,11 +999,12 @@ function MandateReviewPanel(props: {
         <dt>Expiry</dt>
         <dd>{new Date(Number(props.draft.expiresAt) * 1000).toUTCString()}</dd>
       </dl>
+      {error && <p className="dialog-error">{error}</p>}
       <div className="review-actions">
         <button className="secondary" onClick={props.onCancel}>
           Cancel
         </button>
-        <button className="primary" onClick={props.onConfirm} disabled={props.disabled}>
+        <button className="primary" onClick={props.onConfirm} disabled={props.disabled || !!error}>
           Sign mandate <span>→</span>
         </button>
       </div>

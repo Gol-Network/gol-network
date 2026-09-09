@@ -54,21 +54,35 @@ test.describe('mocked provider walkthrough', () => {
     await expect(gasReview).toContainText('1 USDC');
     await expect(gasReview).toContainText('outside the mandate');
     await completeStep(page, /^Sign transfer/);
-    await expect(page.getByText('Fund the GOL account')).toBeVisible(CONFIRMATION);
-
-    // 6. GOL account funded to exactly the demonstration balance.
-    await page.getByRole('button', { name: /^Fund GOL account/ }).click();
-    await expect(page.getByTestId('transfer-review')).toContainText('100 USDC');
-    await completeStep(page, /^Sign transfer/);
     await expect(page.getByRole('button', { name: /^Create mandate/ })).toBeEnabled(CONFIRMATION);
 
-    // 7. Mandate reviewed before signature.
+    // 6. A mandate can be created while the GOL account still holds no funds.
     await page.getByRole('button', { name: /^Create mandate/ }).click();
     const review = page.getByTestId('mandate-review');
-    await expect(review).toContainText('100 USDC');
     await expect(review).toContainText(RECIPIENT);
+    await review.getByLabel('Per-payment cap (USDC)').fill('90');
+    await review.getByLabel('Cumulative cap (USDC)').fill('100');
     await page.getByRole('button', { name: /^Sign mandate/ }).click();
     await expect(page.getByText(/#1 active/).first()).toBeVisible(CONFIRMATION);
+
+    // 7. The owner chooses a deposit amount independently of the mandate amount.
+    await page.getByRole('button', { name: 'Deposit', exact: true }).click();
+    await page.getByLabel('Amount (USDC)').fill('100');
+    await page.getByRole('button', { name: /^Review deposit/ }).click();
+    await expect(page.getByTestId('transfer-review')).toContainText('100 USDC');
+    await completeStep(page, /^Sign transfer/);
+    await expect(page.getByRole('button', { name: 'Withdraw', exact: true })).toBeEnabled(
+      CONFIRMATION,
+    );
+
+    // Withdrawals also accept an owner-selected amount and return only to the owner wallet.
+    await page.getByRole('button', { name: 'Withdraw', exact: true }).click();
+    await page.getByLabel('Amount (USDC)').fill('5');
+    await page.getByRole('button', { name: /^Review withdraw/ }).click();
+    const withdrawalReview = page.getByTestId('transfer-review');
+    await expect(withdrawalReview).toContainText('5 USDC');
+    await expect(withdrawalReview).toContainText('immutable owner wallet');
+    await completeStep(page, /^Sign transfer/);
 
     // The 40 USDC payment resolves before submission, then reaches a confirmed outcome.
     await page.getByRole('button', { name: /^Run agent/ }).click();

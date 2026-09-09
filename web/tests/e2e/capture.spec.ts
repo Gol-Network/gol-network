@@ -21,11 +21,13 @@ test('capture labeled fixture states', async ({ page }) => {
   await page.getByRole('button', { name: /I understand, provision the agent wallet/ }).click();
   await page.getByRole('button', { name: /^Top up agent gas/ }).click();
   await page.getByRole('button', { name: /^Sign transfer/ }).click();
-  await page.getByRole('button', { name: /^Fund GOL account/ }).click();
-  await page.getByRole('button', { name: /^Sign transfer/ }).click();
   await page.getByRole('button', { name: /^Create mandate/ }).click();
   await page.getByRole('button', { name: /^Sign mandate/ }).click();
   await expect(page.getByText(/#1 active/).first()).toBeVisible({ timeout: 30_000 });
+  await page.getByRole('button', { name: 'Deposit', exact: true }).click();
+  await page.getByLabel('Amount (USDC)').fill('100');
+  await page.getByRole('button', { name: /^Review deposit/ }).click();
+  await page.getByRole('button', { name: /^Sign transfer/ }).click();
 
   await page.getByRole('button', { name: /^Run agent/ }).click();
   await page.getByRole('button', { name: /^Submit request/ }).click();
