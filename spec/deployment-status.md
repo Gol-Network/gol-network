@@ -6,10 +6,15 @@ Last reviewed: 9 September 2026
 
 `gol.network` runs the KMS-backed agent signer. The application is live (not fixture mode) at
 `https://gol.network` on the Tokyo EC2 instance `gol-production`, serving source commit
-`30cf569b10a4b0222cc7ee6fceef3377981c4a21`. `/api/health` reports
+`4ef2c3f697f41a35c9f02bf2322b073171ffb3e7`. `/api/health` reports
 `signer.provider = aws_kms`, `signer.ready = true`, and `ready = true`. The payment worker derives
 the agent address from the production KMS key on startup and refuses to run on any mismatch. The web
 container carries no AWS SDK and no AWS credentials.
+
+There is one shared agent address for all users (spec section 6.1 initial model). `AGENT_GAS_MANAGED`
+is `true`: the operator funds the shared agent EOA's native Arc gas and the owner is never asked to
+top it up. This changes no trust boundary; below `AGENT_GAS_LOW_WATERMARK` the worker still refuses
+to sign (`signer_blocked` / `AGENT_GAS_INSUFFICIENT`).
 
 Still pending: the mandatory real-user browser acceptance on `gol.network` (spec section 10.3). No
 owner-signed mandate for the KMS agent exists yet, so no allowed or refused payment has executed
@@ -62,7 +67,10 @@ Implements [KMS-backed agent signer specification](kms-backed-agent-signer-spec.
       prior requests are terminal `unknown` (`SUBMISSION_AMBIGUOUS`, no `tx_hash`) and are not
       re-claimed.
 - [x] Worker end-to-end `kms:Sign` over a DIGEST returned an `ECDSA_SHA_256` DER signature.
-- [ ] Owner tops up the KMS agent gas reserve on `gol.network`.
+- [x] `AGENT_GAS_MANAGED=true` deployed (commit `4ef2c3f`): the owner gas top-up step is hidden and
+      the operator funds the shared agent EOA.
+- [ ] Operator funds the shared agent address `0x17A1DEfca6BA7BD1f14d6585eD34c14f69ab08eE` with a
+      small native Arc gas reserve and adds a balance alarm on it.
 - [ ] Owner reviews and signs a fresh mandate naming `0x17A1DEfca6BA7BD1f14d6585eD34c14f69ab08eE`.
 - [ ] `pnpm demo:acceptance` (or the browser flow) executes one allowed 40 USDC payment and one
       refused 70 USDC payment under the KMS signer, with Graph and grounded-answer evidence.
