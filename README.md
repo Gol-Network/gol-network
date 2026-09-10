@@ -1,160 +1,231 @@
 <p align="center">
-  <img src="assets/gol-logo.png" width="112" alt="GOL logo" />
+  <a href="https://gol.network">
+    <img src="assets/gol-logo.png" width="112" alt="GOL logo" />
+  </a>
 </p>
 
-# GOL
+<h1 align="center">GOL</h1>
 
-**An agent payment account that enforces spending limits and explains refusals on-chain.**
+<p align="center">
+  <strong>Owner-controlled accounts for safe, auditable agent payments.</strong>
+</p>
 
-![GOL cover](assets/gol-cover-640x360.png)
+<p align="center">
+  <a href="https://gol.network">Live application</a> ·
+  <a href="ARCHITECTURE.md">Architecture</a> ·
+  <a href="spec/deployment-status.md">Deployment status</a> ·
+  <a href="deploy/README.md">Operations</a>
+</p>
 
-GOL lets a small business owner authorize a separate AI operations agent to pay one approved contractor in USDC on Arc testnet. The owner signs a mandate with a per-payment cap, cumulative cap, allowlist, and expiry. The immutable account contract is the final authority: it transfers an allowed payment or persists a policy refusal without moving funds. The Graph supplies the evidence used for activity and cited natural-language explanations.
+![GOL product overview](assets/gol-cover-640x360.png)
 
-The acceptance story is deliberately narrow: fund 100 USDC, pay 40 USDC, then request 70 USDC. The first request executes. The second is recorded as `CUMULATIVE_CAP` with 60 USDC headroom.
+GOL is an account and execution system for AI agents on Arc testnet. An owner defines a mandate—
+approved recipients, payment limits, cumulative budget, and expiry—and a separate agent can act only
+inside those rules. The `GolAccount` smart contract is the final authority: an allowed payment moves
+USDC, while a policy violation is recorded as an on-chain refusal without transferring funds.
 
-> Deployment status: local implementation complete, external deployment not performed. [The deployment manifest](deployments/arc-testnet.json) intentionally contains `not_deployed` placeholders until real addresses and receipts exist. Without provider configuration the interface runs an explicitly labeled fixture mode: a mocked provider walkthrough that drives the same interface states as a live payment and is never evidence.
+The application combines an owner dashboard, a streaming AG-UI/LangGraph assistant, Aave MCP tools,
+a durable payment journal, and indexed evidence from The Graph. Read-only and simulation tools may
+run automatically; every wallet write is prepared for explicit human review.
 
-Track the remaining provider provisioning, contract and subgraph deployment, production rollout,
-live acceptance, and submission evidence in [the deployment status checklist](spec/deployment-status.md).
+> **Project status:** the application, verified Arc testnet factory, and subgraph are live. The latest
+> operational evidence and remaining acceptance work are tracked in
+> [spec/deployment-status.md](spec/deployment-status.md). Arc testnet does not currently have an
+> official Aave deployment; the repository's Aave-compatible Arc sandbox has been simulated but has
+> not been broadcast. Never treat fixture data or that sandbox as an official Aave market.
 
-## Why the controls matter
+## What GOL provides
 
-GOL uses three separate control planes:
+- **Contract-enforced mandates** — recipient allowlists, per-payment caps, cumulative limits,
+  expiration, revocation, replay protection, and deterministic refusal reasons.
+- **Owner-controlled custody** — account creation, deposits, withdrawals, mandates, and prepared
+  protocol actions remain in the connected owner wallet.
+- **Restricted agent execution** — production supports a non-exportable AWS KMS signer; Privy-backed
+  restricted signers remain available as an alternative.
+- **Streaming agent interface** — a separate LangGraph service streams AG-UI text, tool lifecycle
+  events, and structured results through a same-origin Next.js proxy.
+- **Aave MCP integration** — the agent discovers allowlisted Aave tools, reads live protocol data,
+  simulates actions, and returns unsigned transactions for review.
+- **Durable and explainable outcomes** — PostgreSQL preserves execution state, while The Graph
+  indexes contract events used by activity views and cited answers.
+- **Fail-closed boundaries** — malformed model output, signer mismatch, stale evidence, missing
+  provider configuration, and unsupported transaction shapes do not become successful actions.
 
-- Privy authenticates the owner and provisions a separate agent wallet with a backend signer limited to Arc chain ID `5042002`, the linked GOL account, and zero native value. The policy constrains the transaction envelope only; it is not an ABI-level allowlist and is never described as one.
-- `GolAccount` enforces recipient, amount, cumulative budget, expiry, revocation, replay, and caller rules on-chain. The agent and model cannot change these rules.
-- The Graph indexes `Executed` and `Refused` events. The question layer cites those records and reports freshness instead of inventing missing evidence.
+## System design
 
-Owner actions run directly in the browser wallet. The backend never receives an owner signing credential. The model only parses a bounded instruction or phrases a read-only explanation. It never supplies a request ID, signs, chooses transaction status, or decides policy.
+![GOL production architecture](assets/architecture.png)
 
-![GOL architecture](assets/architecture.png)
+The authority path is deliberately split:
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for trust boundaries, failure semantics, and recovery behavior.
+1. The owner signs account and mandate changes directly in the browser wallet.
+2. The web API authenticates requests and writes payment instructions to a PostgreSQL journal.
+3. A persistent worker validates the request, constructs the exact transaction, and asks the
+   configured restricted signer to sign it.
+4. `GolAccount` independently enforces the active mandate and emits `Executed` or `Refused`.
+5. The Graph indexes those events, and the application preserves freshness and provenance when
+   presenting them.
 
-## Repository map
+The model never receives signing credentials, selects request IDs, decides transaction outcomes, or
+bypasses wallet review. GOL-native LangGraph tools return typed client handoffs instead of mutating
+account state. See [ARCHITECTURE.md](ARCHITECTURE.md) for the complete trust boundaries, journal state
+machine, recovery behavior, and failure semantics.
 
-| Path                 | Purpose                                                                                   |
-| -------------------- | ----------------------------------------------------------------------------------------- |
-| `contracts/`         | Foundry contracts, deployment script, behavior tests, invariant tests                     |
-| `packages/protocol/` | Shared ABI, Arc constants, exact USDC parsing, API types                                  |
-| `agent/`             | Durable PostgreSQL journal, strict model adapter, Privy signer, chain reconciliation, CLI |
-| `langgraph-agent/`   | Separate LangGraph server that streams AG-UI events and calls bounded Aave/GOL tools      |
-| `subgraph/`          | Factory template, account event mappings, GraphQL schema and queries                      |
-| `web/`               | One-page Next.js owner workflow and authenticated API routes                              |
-| `deploy/`            | Pinned Docker Compose stack, TLS proxy, migration, backup, restore, release scripts       |
-| `scripts/`           | Redacted provider preflight, subgraph preparation, and the live 40/70 acceptance runner   |
-| `spec/`              | Product, architecture, implementation, Studio, evidence, prompts, and submission records  |
+## Technology
 
-## Local review
+| Layer                | Implementation                                                                |
+| -------------------- | ----------------------------------------------------------------------------- |
+| Smart accounts       | Solidity, Foundry, OpenZeppelin, official Arc testnet USDC                    |
+| Shared protocol      | TypeScript ABIs, constants, validation, exact integer amount types            |
+| Agent runtime        | Node.js worker, PostgreSQL journal, OpenAI Responses, AWS KMS or Privy signer |
+| Conversational agent | Python, LangGraph, FastAPI, AG-UI, Aave MCP                                   |
+| Indexing             | The Graph subgraph and GraphQL queries                                        |
+| Application          | Next.js, React, Tailwind CSS, shadcn/ui, Privy                                |
+| Operations           | Docker Compose, Caddy, PostgreSQL 17, encrypted off-host backups              |
 
-Requirements: Node.js 22, pnpm 11.17.0, Python 3.11+ with uv, Foundry 1.5.1 or compatible, and Docker Compose for database integration.
+## Repository layout
+
+| Path                 | Responsibility                                                                         |
+| -------------------- | -------------------------------------------------------------------------------------- |
+| `contracts/`         | `GolAccount`, factory, deployment scripts, unit/fuzz/invariant tests, Arc Aave sandbox |
+| `packages/protocol/` | Shared ABI, Arc constants, exact USDC parsing, validation, and API types               |
+| `agent/`             | Journal, model adapter, signer providers, reconciliation worker, and operator CLI      |
+| `langgraph-agent/`   | Independent streaming agent server and bounded Aave/GOL tool catalogue                 |
+| `subgraph/`          | Event schema, mappings, queries, and Matchstick tests                                  |
+| `web/`               | Next.js owner experience, API routes, AG-UI client, and wallet review surfaces         |
+| `deploy/`            | Production Compose stack, release, migration, backup, and restore tooling              |
+| `deployments/`       | Checked-in public deployment manifests and verification references                     |
+| `scripts/`           | Preflight, policy probe, subgraph preparation, and live acceptance tooling             |
+| `spec/`              | Product specifications, architecture decisions, evidence, and release checklists       |
+
+## Local development
+
+### Prerequisites
+
+- Node.js 22
+- pnpm 11.17.0
+- Python 3.11+ and [uv](https://docs.astral.sh/uv/)
+- Foundry 1.5.1 or compatible
+- Docker with Compose v2 for PostgreSQL and production-stack validation
+
+Install the pinned workspace dependencies and initialize Solidity submodules:
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm typecheck
-pnpm test
-pnpm build
-(cd contracts && forge test)
+git submodule update --init --recursive
 ```
 
-Start the labeled fixture walkthrough. This launches both the web app and the separate LangGraph
-service:
+Start the web application and LangGraph service:
 
 ```bash
 pnpm dev
 ```
 
-When `web/.env.local` contains live database and Arc settings, `pnpm dev` also starts the persistent
-payment worker. For separate logs, run `pnpm langgraph:dev`, `pnpm --filter @gol/agent worker`, and
-`pnpm --filter @gol/web dev` in separate terminals. The development services share the same local
-runtime configuration, so model and provider values only need to be entered once.
+Open [http://127.0.0.1:3000](http://127.0.0.1:3000). Without provider credentials, development
+runs in an explicitly labeled fixture mode. Fixture mode exercises the same review states without
+touching a chain, signer, paid model, or external provider; its output is not deployment evidence.
 
-The browser uses the official AG-UI client through `/api/agent/run`. Next.js validates and
-streams that request to the separate LangGraph service on `127.0.0.1:8124`. The service may read
-Aave data and prepare unsigned actions, but GOL account writes are returned as client handoffs to
-the existing owner-review and payment-journal flow; it receives no signing credentials.
-Prepared Aave transactions show their exact chain, sender, destination, native value and calldata.
-They reach the connected owner wallet only after explicit review, and that wallet must match the
-sender returned by Aave.
+For live local integrations, create `web/.env.local` from the field definitions in
+[deploy/.env.example](deploy/.env.example). Keep it untracked. `pnpm dev` starts the payment worker
+automatically when both `DATABASE_URL` and `ARC_RPC_URL` are present. The same local file is loaded by
+the web and LangGraph services, so server-only credentials do not need to be duplicated.
 
-Open `http://127.0.0.1:3000`. With no `PRIVY_APP_ID` and no `FACTORY_ADDRESS`, the page shows a persistent `FIXTURE MODE` banner and runs a mocked provider flow: the resumable owner checklist, a 40 USDC execution, a 70 USDC on-chain refusal, the `On-chain; indexing pending` transition, and a grounded answer with citations. Nothing touches a chain, a signer, or a paid model, and the results are never presented as provider evidence.
+### Validation
 
-The browser-facing configuration is read on the server at request time and passed to client components as typed props, so the same production image can be pointed at different Privy, Arc, explorer, and factory values without rebuilding. There are no build-time `NEXT_PUBLIC_*` values.
+Run the workspace checks:
 
-For database integration tests, start a disposable PostgreSQL 17 instance and set `TEST_DATABASE_URL`. Tests skip cleanly when it is absent.
+```bash
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm format:check
+```
+
+Run the contract, subgraph, and browser suites when changing their respective boundaries:
+
+```bash
+forge test --root contracts -vvv
+pnpm --filter @gol/subgraph codegen
+pnpm --filter @gol/subgraph build
+pnpm --filter @gol/web test:e2e
+docker compose -f deploy/docker-compose.yml config -q
+```
+
+PostgreSQL integration tests require a disposable database and otherwise skip cleanly:
 
 ```bash
 TEST_DATABASE_URL=postgresql://gol_runtime:password@127.0.0.1:5432/gol \
   pnpm --filter @gol/agent test
 ```
 
-## Live configuration order
+## Runtime configuration
 
-External accounts and credentials are intentionally not embedded in this repository.
+Configuration is parsed and validated on the server when the application starts. Public values are
+passed to client components as typed props; secrets never enter browser bundles, and production does
+not rely on build-time `NEXT_PUBLIC_*` variables.
 
-1. Deploy `GolAccountFactory` on Arc testnet using [contracts/script/Deploy.s.sol](contracts/script/Deploy.s.sol). The script rejects any other chain and fixes official Arc USDC at `0x3600000000000000000000000000000000000000`.
-2. Replace only the deployment fields in [deployments/arc-testnet.json](deployments/arc-testnet.json) with actual addresses, block, bytecode hash, source commit, and verification references.
-3. Run `pnpm subgraph:prepare` to write the recorded factory address and start block into [subgraph/subgraph.yaml](subgraph/subgraph.yaml), then follow [spec/studio-setup.md](spec/studio-setup.md). The command refuses a manifest that still reports `not_deployed`, a null factory, or a null start block, so the placeholder address cannot be deployed. Record the real deployment ID and query endpoint without committing its API key.
-4. Create a dedicated Privy app, verification key, and authorization key quorum. One canonical `PRIVY_APP_ID` serves authentication, provisioning, the worker, and the public app ID handed to the browser. Configure the production environment from [deploy/.env.example](deploy/.env.example).
-5. Verify the existing `gol-production` EC2 target, DNS, encrypted storage, and backup role, then follow [deploy/README.md](deploy/README.md). The scripts do not create infrastructure.
-6. Run `pnpm preflight` and, with `GOL_POLICY_PROBE=1`, `pnpm policy:probe` before any rehearsal. Both print booleans, public identifiers, and error codes only.
-7. Sign in as the owner and work through the setup checklist: owner gas, GOL account, restricted agent wallet, agent gas reserve, exactly the required account balance, and the reviewed seven-day mandate. The checklist derives completed steps from the chain on every load, so it resumes rather than repeating work.
+The authoritative field list is [deploy/.env.example](deploy/.env.example). Major groups are:
 
-Do not send other tokens to the account. With Arc's stablecoin-native balance model, do not add the native and ERC-20 views as if they were separate funds.
+- Arc RPC, explorer, chain ID, and deployed GOL addresses
+- Privy owner authentication and optional Privy restricted-signer credentials
+- AWS KMS signer identity, region, address, fee ceilings, and gas policy
+- PostgreSQL, The Graph, OpenAI, LangGraph shared authentication, and Aave MCP
+- Operator-only preflight and acceptance-runner configuration
 
-## Repeatable live acceptance
+Never commit a filled environment file, private key, API token, database password, or provider error
+body.
 
-After deployment and owner setup, use a fresh 100 USDC mandate and an address-book label. The runner generates two cryptographically random request IDs, checks the initial account state, waits for terminal journal states, waits for real indexed records, and asks the grounded question.
+## Deployment and operations
+
+Production runs Caddy, Next.js, the private LangGraph service, one persistent payment worker, and
+PostgreSQL in Docker Compose. Only Caddy exposes a public port. LangGraph receives no wallet, AWS, or
+database credential; only the worker has payment-signing authority.
+
+Before a release, read [deploy/README.md](deploy/README.md), review the current
+[deployment status](spec/deployment-status.md), and run the redacted preflight:
 
 ```bash
-export GOL_API_URL=https://your-gol-host.example
-export GOL_DEV_TOKEN=local-secret-from-production-host
-export GOL_DEMO_MANDATE_ID=1
-export GOL_DEMO_RECIPIENT_LABEL='Design contractor'
-pnpm demo:acceptance
+pnpm preflight
+docker compose -f deploy/docker-compose.yml config -q
 ```
 
-It exits nonzero unless the first result is `executed`, the second is `refused` with `CUMULATIVE_CAP`, both transaction hashes exist, and both request IDs appear in The Graph activity. Its output records the deployed source commit, the public application URL, the Privy policy ID, both indexed action IDs, and the answer citations. This is a live acceptance tool, not a fixture generator.
-
-## Pre-integration tooling
-
-These commands accept real values without any source edit.
-
-| Command                 | Purpose                                                                                                                                                                       |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm preflight`        | Redacted provider preflight: configuration presence, Arc chain ID, Privy app and signer quorum, OpenAI model access, Graph `_meta`, deployed bytecode, account ownership      |
-| `pnpm policy:probe`     | Sends one allowed GOL call and one wrong-destination request that Privy must deny before broadcast. Requires `GOL_POLICY_PROBE=1` because the allowed call consumes agent gas |
-| `pnpm subgraph:prepare` | Writes the verified factory address and start block into the subgraph manifest, or refuses an undeployed record                                                               |
-| `pnpm demo:acceptance`  | The final live 40/70 gate                                                                                                                                                     |
-
-None of them print a token, private key, or provider error body.
-
-## Production operations
-
-The production topology is Next.js, a separate credential-free LangGraph/AG-UI service, one persistent payment worker, private PostgreSQL, and Caddy on the existing `gol-production` host. Subgraph Studio remains external. The release script backs up first, drains workers, builds pinned images, applies an idempotent schema, activates services, and checks `/api/health`.
+The release script requires an explicit source commit, creates an encrypted backup, drains workers,
+builds pinned images, applies the idempotent schema, activates services, and checks health:
 
 ```bash
-cp deploy/.env.example deploy/.env.production
-chmod 600 deploy/.env.production
 export RELEASE_COMMIT="$(git rev-parse HEAD)"
 export GOL_BACKUP_BUCKET=private-gol-backups
 export GOL_BACKUP_KMS_KEY_ID=alias/gol-backups
 ./deploy/deploy.sh
 ```
 
-Read [deploy/README.md](deploy/README.md) before running this on a host. Database passwords must be URL-safe because the runtime password is used in a connection URL.
+Provider configuration is not acceptance. A production claim requires the dated receipts, indexed
+events, health result, and browser evidence defined in
+[spec/deployment-status.md](spec/deployment-status.md).
 
-## Security and product limits
+## Security model and limitations
 
-- Arc testnet only. This code is not audited and is not represented as mainnet-ready.
-- GOL verifies payment execution and policy outcomes. It does not verify invoices, identity, work delivery, or off-chain recipient intent.
-- Policy refusals persist only when the direct `pay` transaction itself completes successfully. Malformed calls, unauthorized callers, insufficient funds, token failures, and reverted outer calls remain technical failures.
-- A Privy signer rejection occurs before Arc submission and therefore has no on-chain refusal receipt.
-- Same-ID retries with the same payload are idempotent. A changed payload under the same ID reverts. New request IDs remain new business attempts.
-- Owner revocation is the definitive account kill switch. Removing the additional signer is a separate defense-in-depth action.
+- GOL is Arc testnet software, has not been audited, and is not represented as mainnet-ready.
+- The contract verifies mandate and payment rules; it does not verify invoices, identity, work
+  delivery, or off-chain recipient intent.
+- Owner revocation is the definitive payment-authority kill switch.
+- A contract policy refusal is an on-chain outcome. A signer denial happens before submission and
+  therefore has no refusal receipt.
+- Identical retries are idempotent. Reusing a request ID with a changed payload reverts.
+- Confirmed chain results and indexed results remain distinct until The Graph catches up.
+- Aave preparation produces unsigned transactions only. The connected owner must review and sign,
+  and its address must match the prepared sender.
+- The Arc Aave-compatible sandbox is isolated test infrastructure, not an Aave DAO deployment,
+  production oracle, official market, or eligibility claim.
 
-## Hackathon records
+## Documentation
 
-GOL is documented as an ETHOnline 2026 Start Fresh build. AI-assisted implementation and prompts are disclosed in [spec/prompts](spec/prompts). Public dependencies and generated-asset provenance are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Actual human feedback belongs in [FEEDBACK.md](FEEDBACK.md), which currently states that none has been collected. The final registration, track selection, narration, dashboard checks, and submission remain human actions.
+- [Architecture](ARCHITECTURE.md)
+- [Production operations](deploy/README.md)
+- [Current deployment status](spec/deployment-status.md)
+- [AG-UI and LangGraph design](spec/agui-langgraph-agent.md)
+- [Arc Aave-compatible sandbox](spec/arc-aave-sandbox.md)
+- [Third-party notices](THIRD_PARTY_NOTICES.md)
 
-See [spec/submission-checklist.md](spec/submission-checklist.md) and [spec/submission-copy.md](spec/submission-copy.md) for the honest release handoff.
+GOL was developed as an ETHOnline 2026 Start Fresh project. AI-assisted implementation records and
+public dependency provenance are retained under `spec/` and
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
