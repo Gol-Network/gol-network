@@ -36,7 +36,10 @@ required=(
   PRIVY_APP_SECRET
   PRIVY_VERIFICATION_KEY
   OPENAI_API_KEY
+  GOL_AGENT_SHARED_SECRET
   FACTORY_ADDRESS
+  AGENT_MAX_GAS
+  AGENT_MAX_FEE_PER_GAS
 )
 
 # The agent signer provider selects which signer configuration is mandatory.
@@ -44,7 +47,7 @@ signer_provider="$(read_env AGENT_SIGNER_PROVIDER)"
 signer_provider="${signer_provider:-privy}"
 case "$signer_provider" in
   aws_kms)
-    required+=(AWS_KMS_SIGNER_KEY_ARN AWS_KMS_SIGNER_REGION AWS_KMS_SIGNER_ADDRESS AGENT_MAX_GAS AGENT_MAX_FEE_PER_GAS)
+    required+=(AWS_KMS_SIGNER_KEY_ARN AWS_KMS_SIGNER_REGION AWS_KMS_SIGNER_ADDRESS)
     ;;
   privy)
     required+=(PRIVY_AUTHORIZATION_KEY_ID PRIVY_AUTHORIZATION_PRIVATE_KEY)
@@ -84,9 +87,9 @@ if compose ps --status running postgres | grep -q postgres; then
 else
   compose up -d postgres
 fi
-compose build --pull web worker
+compose build --pull langgraph-agent web worker
 # Migrate before any traffic reaches the new image.
 compose run --rm migrate
-compose up -d postgres web worker caddy
+compose up -d postgres langgraph-agent web worker caddy
 compose exec -T web node -e "fetch('http://127.0.0.1:3000/api/health').then(async r=>{console.log(await r.text());if(!r.ok)process.exit(1)})"
 compose ps

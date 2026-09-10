@@ -43,6 +43,8 @@ services:
     environment:
       DATABASE_URL: postgresql://gol_runtime:${POSTGRES_RUNTIME_PASSWORD:-}@postgres:5432/gol
       GOL_SOURCE_COMMIT: ${RELEASE_COMMIT:-}
+      LANGGRAPH_AGENT_URL: http://langgraph-agent:8124/agent
+      GOL_AGENT_SHARED_SECRET: ${GOL_AGENT_SHARED_SECRET:-}
       # Credential boundary: the web container can obtain no AWS credentials at all, so it can
       # never call kms:Sign or kms:GetPublicKey. Independently testable with `docker compose exec`.
       AWS_EC2_METADATA_DISABLED: 'true'
@@ -50,6 +52,7 @@ services:
     networks: [public, private]
     depends_on:
       migrate: { condition: service_completed_successfully }
+      langgraph-agent: { condition: service_healthy }
     healthcheck:
       test:
         [
@@ -62,6 +65,36 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
+    security_opt: ['no-new-privileges:true']
+
+  langgraph-agent:
+    build:
+      context: ../langgraph-agent
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      AAVE_MCP_URL: ${AAVE_MCP_URL:-https://mcp.aave.com/mcp}
+      AAVE_MCP_DISCOVERY: ${AAVE_MCP_DISCOVERY:-true}
+      ARC_RPC_URL: ${ARC_RPC_URL:-https://rpc.testnet.arc.network}
+      ARC_AAVE_POOL_ADDRESS: ${ARC_AAVE_POOL_ADDRESS:-}
+      GOL_AGENT_SHARED_SECRET: ${GOL_AGENT_SHARED_SECRET:-}
+      GOL_LANGGRAPH_MODEL: ${GOL_LANGGRAPH_MODEL:-gpt-5.5-2026-04-23}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    # The service has outbound model/MCP access but no database, wallet, Privy, or AWS signer
+    # credentials. Next.js reaches it only over the private network and proxies AG-UI streams.
+    networks: [public, private]
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'python',
+          '-c',
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8124/health', timeout=3)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     security_opt: ['no-new-privileges:true']
 
   worker:

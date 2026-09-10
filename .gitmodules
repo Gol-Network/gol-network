@@ -1,0 +1,3 @@
+[submodule "contracts/lib/aave-v3-origin"]
+	path = contracts/lib/aave-v3-origin
+	url = https://github.com/aave-dao/aave-v3-origin.git

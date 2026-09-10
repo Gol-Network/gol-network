@@ -24,6 +24,22 @@ Read browser configuration on the server at runtime and pass it to client compon
 
 Owner wallet actions must remain distinct from agent execution. The browser may request signatures from the connected owner; it must not receive server signing credentials. Keep fixture and live backend paths behaviorally aligned without silently falling back from live mode to fixtures.
 
+## UI Implementation Rules
+
+These rules are mandatory for every new UI and every UI file touched by a change:
+
+- Use shadcn components for all interactive controls and surface primitives. Feature components must not render native `button`, `input`, `textarea`, `select`, dialog, tab, card, or drawer elements directly. Native DOM controls may appear only inside their corresponding reusable shadcn primitive in `src/components/ui/`.
+- Use Tailwind CSS v4 utilities for component styling. Do not add component selectors, page selectors, CSS modules, inline style objects for static presentation, or handwritten CSS declarations outside the Tailwind theme and base layers.
+- Define reusable visual values in `app/globals.css` as Tailwind v4 and shadcn semantic tokens. Colors, borders, radii, shadows, font families, and line heights must use tokens such as `background`, `foreground`, `card`, `muted`, `primary`, `border`, `ring`, `radius`, and `shadow` instead of repeated literals or arbitrary values.
+- Use semantic Tailwind classes such as `bg-card`, `text-muted-foreground`, `border-border`, `rounded-card`, and `shadow-panel`. Repeated hexadecimal colors, repeated arbitrary radii, and repeated arbitrary shadows are not allowed in feature components.
+- Do not add generic AI-generated decoration. This includes decorative status dots, middle-dot separators, em-dash separators, gradients, glow effects, floating blobs, and decorative patterns without explicit product meaning.
+- Use icons only when they communicate a concrete action, asset, protocol, status, or trust boundary. Do not use icons as filler.
+- Use icons from the project's established icon packages, with `lucide-react` as the default. Do not hand-code SVG markup in feature components. Brand marks must come from a maintained official asset or package, never from traced or improvised SVG paths.
+- Keep fixture labeling explicit and visually secondary. Fixture UI must never imply that Privy authenticated, a wallet signed, or a transaction executed on a live chain.
+- When a reference image or reference implementation is provided, preserve its information hierarchy and spacing before introducing new visual patterns.
+
+Before completing a UI change, audit touched feature files for direct native controls, hand-coded SVG, arbitrary color values, arbitrary radii, arbitrary shadows, gradients, middle dots, and em dashes. Run the visual flow in both themes and at desktop and mobile widths.
+
 ## Validation
 
 - `pnpm --filter @gol/web typecheck`

@@ -9,6 +9,12 @@ GOL project-specific contracts, application logic, designs, prompts, and assets 
 | Privy React Auth    |                3.40.0 | https://www.npmjs.com/package/@privy-io/react-auth, Apache-2.0 package metadata | `web/`                     | Unmodified service SDK, incorporated 2026-09-08                      |
 | Privy Node          |                0.34.0 | https://www.npmjs.com/package/@privy-io/node, Apache-2.0 package metadata       | `agent/`, `web/`           | Unmodified service SDK, incorporated 2026-09-08                      |
 | OpenAI JavaScript   |                7.10.0 | https://github.com/openai/openai-node, Apache-2.0                               | `agent/`                   | Unmodified client, incorporated 2026-09-08                           |
+| AG-UI client/core   |                0.0.59 | https://github.com/ag-ui-protocol/ag-ui, MIT                                    | `web/`                     | Unmodified protocol SDKs, incorporated 2026-09-10                    |
+| AG-UI LangGraph     |                0.0.45 | https://github.com/ag-ui-protocol/ag-ui, MIT                                    | `langgraph-agent/`         | Unmodified integration, incorporated 2026-09-10                      |
+| AG-UI protocol      |                0.1.22 | https://github.com/ag-ui-protocol/ag-ui, MIT                                    | `langgraph-agent/`         | Unmodified protocol package, incorporated 2026-09-10                 |
+| LangGraph           |                1.2.11 | https://github.com/langchain-ai/langgraph, MIT                                  | `langgraph-agent/`         | Unmodified graph runtime, incorporated 2026-09-10                    |
+| FastAPI             |               0.141.1 | https://github.com/fastapi/fastapi, MIT                                         | `langgraph-agent/`         | Unmodified HTTP framework, incorporated 2026-09-10                   |
+| jsonschema          |                4.26.0 | https://github.com/python-jsonschema/jsonschema, MIT                            | `langgraph-agent/`         | Validates discovered MCP arguments, incorporated 2026-09-10          |
 | viem                |                2.56.3 | https://github.com/wevm/viem, MIT                                               | protocol, agent, web       | Unmodified package, incorporated 2026-09-08                          |
 | Zod                 |                 4.5.4 | https://github.com/colinhacks/zod, MIT                                          | protocol, web, agent       | Unmodified package, incorporated 2026-09-08                          |
 | node-postgres       |                8.23.0 | https://github.com/brianc/node-postgres, MIT                                    | agent, web                 | Unmodified package, incorporated 2026-09-08                          |
@@ -23,8 +29,12 @@ GOL project-specific contracts, application logic, designs, prompts, and assets 
 | PostgreSQL image    |           17.6-alpine | https://www.postgresql.org/about/licence/, PostgreSQL License                   | production data store      | Pinned public container image, no modification                       |
 | Caddy image         |         2.10.2-alpine | https://github.com/caddyserver/caddy, Apache-2.0                                | TLS reverse proxy          | Pinned public container image, configuration is original             |
 | Node.js image       | 22.22.0-bookworm-slim | https://github.com/nodejs/node, MIT and bundled notices                         | application images         | Pinned public container base, no source modification                 |
+| uv Python image     | 0.11.30 / Python 3.13 | https://github.com/astral-sh/uv, Apache-2.0 or MIT                              | `langgraph-agent/` image   | Pinned public container base, no source modification                 |
+| Aave V3 Origin      |          8305565ae342 | https://github.com/aave-dao/aave-v3-origin, BUSL-1.1                            | Arc testnet sandbox        | Pinned Git submodule; custom Arc deployment and USDC listing script  |
 
-OpenZeppelin Contracts was evaluated in the specification but is not incorporated. `GolAccount` contains an original minimal fixed-token call wrapper and reentrancy guard, so no OpenZeppelin source is copied into this repository.
+`GolAccount` contains an original minimal fixed-token call wrapper and reentrancy guard. The Aave
+V3 Origin submodule carries its own pinned OpenZeppelin and Solidity Utils dependencies for the
+optional Arc testnet sandbox only; those dependencies are not used by `GolAccount`.
 
 The generated cover at `assets/gol-cover.png` was created with OpenAI's built-in image generation on 8 September 2026 from the prompt recorded in `spec/prompts/2026-09-08-cover-image.md`. The logo and architecture diagram are original SVG source created during the same implementation session. No pre-existing project-specific visual asset was used.
 

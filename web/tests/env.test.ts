@@ -88,4 +88,11 @@ describe('runtime configuration', () => {
     expect(result.config.public.mode).toBe('fixture');
     expect(result.config.public.privyAppId).toBeNull();
   });
+
+  it('allows an explicitly labeled fixture build without production credentials', () => {
+    const result = parseEnvironment({ GOL_FIXTURE_MODE: 'true' }, { production: true });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.public.mode).toBe('fixture');
+  });
 });
