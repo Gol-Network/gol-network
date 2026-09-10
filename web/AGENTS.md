@@ -18,6 +18,8 @@ These rules apply to `web/` in addition to the repository root guide. Keep the m
 - `src/server/` owns privileged orchestration, chain reads, journal access, and runtime environment parsing.
 - `src/client/` owns browser-safe backend adapters and view models; `src/components/` owns React UI.
 - `src/wallet/` owns owner-authorized browser wallet actions.
+- `app/tokenized-stocks/` and `src/components/tokenized-stocks/` own the Base hackathon's mocked
+  Tokenized Stocks experience. Keep it clearly identified as mock data until a live market adapter lands.
 - `tests/` contains Vitest boundary tests and Playwright flows. `.next/`, test output, and package `node_modules/` are generated.
 
 Read browser configuration on the server at runtime and pass it to client components as typed, serializable props. Do not add `NEXT_PUBLIC_*` build-time configuration. Keep secrets, database access, Privy server APIs, and privileged chain operations behind server-only modules and route handlers. Validate request bodies, query parameters, chain IDs, addresses, and upstream responses at API boundaries.

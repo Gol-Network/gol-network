@@ -6,11 +6,16 @@ Last reviewed: 10 September 2026
 
 `gol.network` runs the KMS-backed agent signer. The application is live (not fixture mode) at
 `https://gol.network` on the Tokyo EC2 instance `gol-production`, serving source commit
-`a2b4af475d0fba9a0bd09c6b77d39f6455b2716b` (adds the `base:app_id` verification meta tag;
-no runtime or schema change from `4ef2c3f`). `/api/health` reports
+`eeb5596028b2e652508d48646f84909391356548` (adds the mocked Tokenized Stocks tab at
+`/tokenized-stocks` for the Base hackathon; client-only, no runtime, API, env, or schema change
+from `a2b4af4`). `/api/health` reports
 `signer.provider = aws_kms`, `signer.ready = true`, and `ready = true`. The payment worker derives
 the agent address from the production KMS key on startup and refuses to run on any mismatch. The web
 container carries no AWS SDK and no AWS credentials.
+
+The Tokenized Stocks tab is an explicitly labeled mock: it shows a "MOCK UI" banner, builds its
+market, portfolio, mandate, and audit log in the browser on each load, reaches no API route, and is
+never evidence. The Arc testnet workflow at `/` is unchanged.
 
 There is one shared agent address for all users (spec section 6.1 initial model). `AGENT_GAS_MANAGED`
 is `true`: the operator funds the shared agent EOA's native Arc gas and the owner is never asked to
