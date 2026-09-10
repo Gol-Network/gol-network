@@ -1,8 +1,9 @@
 .git
 .github
-**/.next
+**/.next*
 **/dist
 **/node_modules
+**/.venv
 **/test-results
 **/playwright-report
 contracts/cache

@@ -1,22 +1,28 @@
-import { ARC_TESTNET_USDC, erc20Abi, golAccountAbi } from '@gol/protocol';
-import { agentPolicyDisclosure } from '@gol/agent/privy';
+import { ARC_TESTNET_USDC, addressSchema, erc20Abi, golAccountAbi } from '@gol/protocol';
+import { AGENT_POLICY_REVISION, agentPolicyDisclosure } from '@gol/agent/privy';
 import { kmsAgentDisclosure } from '@gol/agent/signer-disclosure';
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { authenticate, errorResponse, pool } from '@/server/core';
 import { arcClient } from '@/server/chain';
 import { runtimeConfig } from '@/server/env';
 
 export const runtime = 'nodejs';
 
+const querySchema = z.object({ owner: addressSchema });
+
 export async function GET(request: Request) {
   try {
     const session = await authenticate(request);
+    const url = new URL(request.url);
+    const { owner } = querySchema.parse(Object.fromEntries(url.searchParams));
     const { public: publicConfig } = runtimeConfig();
     const result = await pool.query(
       `SELECT owner_address, account_address, agent_address, agent_wallet_id, policy_id,
-              signer_provider, signer_region, updated_at
-       FROM account_links WHERE user_subject = $1`,
-      [session.subject],
+              signer_provider, signer_region, policy_version, updated_at
+       FROM account_links
+       WHERE user_subject = $1 AND lower(owner_address) = lower($2)`,
+      [session.subject, owner],
     );
     if (result.rowCount !== 1) {
       return NextResponse.json({ state: 'no_account', chainId: publicConfig.chainId });
@@ -88,7 +94,11 @@ export async function GET(request: Request) {
               provider: 'privy' as const,
               walletId: row.agent_wallet_id ? String(row.agent_wallet_id) : null,
               policyId: row.policy_id ? String(row.policy_id) : null,
-              status: 'configured' as const,
+              policyVersion: row.policy_version ? String(row.policy_version) : null,
+              status:
+                String(row.policy_version ?? '') === AGENT_POLICY_REVISION
+                  ? ('configured' as const)
+                  : ('migration_required' as const),
               disclosure: agentPolicyDisclosure(accountAddress),
             },
       // The native gas view and the ERC-20 payment view describe the same underlying Arc USDC.

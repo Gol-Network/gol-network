@@ -1,12 +1,15 @@
 import 'server-only';
 
-import { verifyAccessToken } from '@privy-io/node';
+import { PrivyClient } from '@privy-io/node';
 import { Pool } from 'pg';
 import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
 import { EnvironmentError, runtimeConfig } from './env';
 
-const globalPool = globalThis as typeof globalThis & { golPool?: Pool };
+const globalPool = globalThis as typeof globalThis & {
+  golPool?: Pool;
+  golPrivy?: { appId: string; client: PrivyClient };
+};
 export const pool =
   globalPool.golPool ??
   new Pool({
@@ -28,14 +31,15 @@ export async function authenticate(request: Request): Promise<Session> {
     return { subject: server.developerSubject, developer: true };
   }
   const appId = server.privyAppId;
-  const verificationKey = server.privyVerificationKey;
-  if (!appId || !verificationKey) throw new HttpError(503, 'AUTH_UNAVAILABLE');
+  const appSecret = server.privyAppSecret;
+  if (!appId || !appSecret) throw new HttpError(503, 'AUTH_UNAVAILABLE');
   try {
-    const verified = await verifyAccessToken({
-      access_token: token,
-      app_id: appId,
-      verification_key: verificationKey,
-    });
+    // Privy's SDK uses the app-scoped remote JWKS by default. This stays correct when the Privy app
+    // changes and avoids accepting tokens with a stale static key from a different project.
+    if (!globalPool.golPrivy || globalPool.golPrivy.appId !== appId) {
+      globalPool.golPrivy = { appId, client: new PrivyClient({ appId, appSecret }) };
+    }
+    const verified = await globalPool.golPrivy.client.utils().auth().verifyAccessToken(token);
     return { subject: verified.user_id, developer: false };
   } catch {
     throw new HttpError(401, 'INVALID_SESSION');
@@ -45,10 +49,18 @@ export async function authenticate(request: Request): Promise<Session> {
 export function requireWriteOrigin(request: Request, session: Session): void {
   if (session.developer) return;
   const configured = runtimeConfig().server.appOrigin;
-  if (!configured || request.headers.get('origin') !== configured) {
-    throw new HttpError(403, 'ORIGIN_DENIED');
-  }
+  const origin = request.headers.get('origin');
+  if (configured && origin === configured) return;
+  if (process.env.NODE_ENV !== 'production' && origin && LOCAL_WRITE_ORIGINS.has(origin)) return;
+  throw new HttpError(403, 'ORIGIN_DENIED');
 }
+
+const LOCAL_WRITE_ORIGINS = new Set([
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:3100',
+  'http://127.0.0.1:3100',
+]);
 
 export async function readJson(request: Request): Promise<unknown> {
   const declared = Number(request.headers.get('content-length') ?? 0);

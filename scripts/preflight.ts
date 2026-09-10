@@ -36,14 +36,10 @@ async function main() {
     'PRIVY_VERIFICATION_KEY',
     'OPENAI_API_KEY',
     'FACTORY_ADDRESS',
+    'AGENT_MAX_GAS',
+    'AGENT_MAX_FEE_PER_GAS',
     ...(SIGNER_PROVIDER === 'aws_kms'
-      ? [
-          'AWS_KMS_SIGNER_KEY_ARN',
-          'AWS_KMS_SIGNER_REGION',
-          'AWS_KMS_SIGNER_ADDRESS',
-          'AGENT_MAX_GAS',
-          'AGENT_MAX_FEE_PER_GAS',
-        ]
+      ? ['AWS_KMS_SIGNER_KEY_ARN', 'AWS_KMS_SIGNER_REGION', 'AWS_KMS_SIGNER_ADDRESS']
       : ['PRIVY_AUTHORIZATION_KEY_ID', 'PRIVY_AUTHORIZATION_PRIVATE_KEY']),
   ];
   const missing = configured.filter((name) => !env[name]);
@@ -59,7 +55,10 @@ async function main() {
   } else {
     checks.push({
       name: 'privy_authorization_pair',
-      ok: Boolean(env.PRIVY_AUTHORIZATION_KEY_ID) === Boolean(env.PRIVY_AUTHORIZATION_PRIVATE_KEY),
+      ok:
+        Boolean(env.PRIVY_AUTHORIZATION_KEY_ID) === Boolean(env.PRIVY_AUTHORIZATION_PRIVATE_KEY) &&
+        /^[1-9][0-9]*$/.test(env.AGENT_MAX_GAS ?? '') &&
+        /^[1-9][0-9]*$/.test(env.AGENT_MAX_FEE_PER_GAS ?? ''),
       detail: env.PRIVY_AUTHORIZATION_KEY_ID ?? null,
     });
   }

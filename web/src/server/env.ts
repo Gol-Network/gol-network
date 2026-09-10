@@ -39,6 +39,8 @@ export interface RuntimeConfig {
     graphQueryUrl: string | null;
     graphApiKey: string | null;
     openAiApiKey: string | null;
+    /** Server-only Botanary API used for owner money build, relay, quote, and receive flows. */
+    botanaryApiUrl: string | null;
     /** Active agent signer. Privy stays authoritative for owner authentication regardless. */
     agentSignerProvider: 'privy' | 'aws_kms';
     /** Operational configuration. Never exposed to a browser bundle or a public API response. */
@@ -82,9 +84,12 @@ export function parseEnvironment(
     const raw = source[name]?.trim();
     return raw ? raw : null;
   };
+  const fixtureModeRequested = value('GOL_FIXTURE_MODE') === 'true';
 
   const demand = (name: string, raw: string | null): string | null => {
-    if (options.production && raw === null) issues.push({ field: name, problem: 'required' });
+    if (options.production && !fixtureModeRequested && raw === null) {
+      issues.push({ field: name, problem: 'required' });
+    }
     return raw;
   };
 
@@ -107,7 +112,8 @@ export function parseEnvironment(
       issues.push({ field: name, problem: 'invalid_url' });
       return null;
     }
-    if (parsed.protocol !== 'https:' && !(!options.production && parsed.protocol === 'http:')) {
+    const allowsHttp = !options.production || fixtureModeRequested;
+    if (parsed.protocol !== 'https:' && !(allowsHttp && parsed.protocol === 'http:')) {
       issues.push({ field: name, problem: 'requires_https' });
       return null;
     }
@@ -198,13 +204,14 @@ export function parseEnvironment(
   const demoAccount = address('DEMO_ACCOUNT', value('DEMO_ACCOUNT'));
   const rpcUrl = url('ARC_RPC_URL', value('ARC_RPC_URL'), ARC_TESTNET_RPC_URL);
   const explorerUrl = url('ARC_EXPLORER_URL', value('ARC_EXPLORER_URL'), ARC_TESTNET_EXPLORER_URL);
-  const faucetUrl = url('ARC_FAUCET_URL', value('ARC_FAUCET_URL'), null);
+  const faucetUrl = url('ARC_FAUCET_URL', value('ARC_FAUCET_URL'), 'https://faucet.circle.com/');
   const graphQueryUrl = url(
     'GRAPH_QUERY_URL',
     demand('GRAPH_QUERY_URL', value('GRAPH_QUERY_URL')),
     null,
   );
   const appOrigin = url('APP_ORIGIN', demand('APP_ORIGIN', value('APP_ORIGIN')), null);
+  const botanaryApiUrl = url('BOTANARY_API_URL', value('BOTANARY_API_URL'), null);
   demand('DATABASE_URL', value('DATABASE_URL'));
 
   if (issues.length > 0) return { ok: false, issues };
@@ -213,7 +220,7 @@ export function parseEnvironment(
     ok: true,
     config: {
       public: {
-        mode: privyAppId && factoryAddress ? 'live' : 'fixture',
+        mode: !fixtureModeRequested && privyAppId && factoryAddress ? 'live' : 'fixture',
         privyAppId,
         factoryAddress,
         chainId: ARC_TESTNET_CHAIN_ID,
@@ -249,6 +256,7 @@ export function parseEnvironment(
         graphQueryUrl,
         graphApiKey: value('GRAPH_API_KEY'),
         openAiApiKey: value('OPENAI_API_KEY'),
+        botanaryApiUrl,
         agentSignerProvider,
         awsKmsSignerKeyArn: awsKmsSignerKeyArnRaw,
         awsKmsSignerRegion,

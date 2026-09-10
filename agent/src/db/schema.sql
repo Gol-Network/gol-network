@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS account_links (
   agent_wallet_id text,
   agent_address char(42) NOT NULL,
   policy_id text,
+  policy_version varchar(16),
   signer_provider varchar(32) NOT NULL DEFAULT 'privy',
   signer_key_arn text,
   signer_region varchar(32),
@@ -74,6 +75,7 @@ CREATE TABLE IF NOT EXISTS request_transactions (
 -- Provider-neutral signer columns on account_links. Historical Privy identifiers stay nullable.
 ALTER TABLE account_links ADD COLUMN IF NOT EXISTS agent_wallet_id text;
 ALTER TABLE account_links ADD COLUMN IF NOT EXISTS policy_id text;
+ALTER TABLE account_links ADD COLUMN IF NOT EXISTS policy_version varchar(16);
 ALTER TABLE account_links ALTER COLUMN agent_wallet_id DROP NOT NULL;
 ALTER TABLE account_links ALTER COLUMN policy_id DROP NOT NULL;
 ALTER TABLE account_links

@@ -21,7 +21,7 @@ Browser configuration is read on the server when the container starts, not when 
 
 ## Agent signer: AWS KMS
 
-`AGENT_SIGNER_PROVIDER` selects the agent signer. `privy` keeps the historical Privy agent wallet and scoped policy. `aws_kms` replaces the agent signer with a non-exportable AWS KMS `ECC_SECG_P256K1`, `SIGN_VERIFY` key in `AWS_KMS_SIGNER_REGION`. Privy still authenticates the owner and owns the owner embedded wallet in both modes. The on-chain `GolAccount` remains the payment authority; KMS cannot inspect an Ethereum digest and does not understand mandate policy.
+`AGENT_SIGNER_PROVIDER` selects the agent signer. `privy` uses a separate Privy agent wallet and scoped raw-signing policy. `aws_kms` replaces the Privy agent signer with a non-exportable AWS KMS `ECC_SECG_P256K1`, `SIGN_VERIFY` key in `AWS_KMS_SIGNER_REGION`. Privy still authenticates the owner and owns the owner embedded wallet in both modes. The on-chain `GolAccount` remains the payment authority; KMS cannot inspect an Ethereum digest and does not understand mandate policy.
 
 ### Provisioning the production key
 
@@ -54,7 +54,7 @@ export GOL_BACKUP_KMS_KEY_ID=alias/gol-backups
 ./deploy/deploy.sh
 ```
 
-The script requires a clean source tree, or an explicit `ALLOW_DIRTY_TREE=1` that records the intentional source commit. It then validates required runtime configuration, stops new worker claims, waits up to 45 seconds, creates an encrypted off-host backup, builds both Node 22 images, applies the idempotent schema before any traffic, activates services, and requires the internal health endpoint to return 200. `RELEASE_COMMIT` is passed into the running services as `GOL_SOURCE_COMMIT`, so `/api/health` and the acceptance runner report the deployed commit. Rollback means checking out a prior compatible commit and rerunning with its exact hash. Never delete `postgres_data` during rollback.
+The script requires a clean source tree, or an explicit `ALLOW_DIRTY_TREE=1` that records the intentional source commit. It then validates required runtime configuration, stops new worker claims, waits up to 45 seconds, creates an encrypted off-host backup, builds the pinned LangGraph and Node images, applies the idempotent schema before any traffic, activates services, and requires the internal health endpoint to return 200. `RELEASE_COMMIT` is passed into the running services as `GOL_SOURCE_COMMIT`, so `/api/health` and the acceptance runner report the deployed commit. Rollback means checking out a prior compatible commit and rerunning with its exact hash. Never delete `postgres_data` during rollback.
 
 ## Backup and restore drill
 
@@ -69,6 +69,6 @@ The restore script refuses database names outside the `gol_restore_` prefix. It 
 
 ## Recovery checks
 
-After a VM or container restart, confirm `docker compose ps`, `/api/health`, free disk space, the worker log, and the newest S3 backup. `/api/health` actively verifies the database and the Arc chain ID and performs one bounded Graph metadata query; it never makes a paid model call, and it reports `components.signer` without any KMS call. The worker log line `{"event":"kms_signer_ready",...}` proves the derived address matched configuration and every linked row on startup. Under `aws_kms`, the journal reconciles by the locally computed transaction hash: after the exact raw bytes are persisted it always rebroadcasts those bytes and never re-signs, and `nonce too low` reconciles the local hash against `getRequest` rather than creating a new transaction. Under `privy`, it replays a lost signing response under the same idempotency key. Caddy owns TLS state in `caddy_data`; PostgreSQL state remains in `postgres_data`.
+After a VM or container restart, confirm `docker compose ps`, `/api/health`, free disk space, the worker log, and the newest S3 backup. `/api/health` actively verifies the database and the Arc chain ID and performs one bounded Graph metadata query; it never makes a paid model call, and it reports `components.signer` without any KMS call. The worker log line `{"event":"kms_signer_ready",...}` proves the derived address matched configuration and every linked row on startup. Under both raw-signing providers, the journal reconciles by the locally computed transaction hash: after the exact raw bytes are persisted it always rebroadcasts those bytes and never re-signs, and `nonce too low` reconciles the local hash against `getRequest` rather than creating a new transaction. Caddy owns TLS state in `caddy_data`; PostgreSQL state remains in `postgres_data`.
 
 Before a rehearsal, run `pnpm provider:preflight` (alias `pnpm preflight`) from an operator shell that has `.env.production` loaded. With `AGENT_SIGNER_PROVIDER=aws_kms` it checks the KMS signer configuration (ARN shape, region, derived address checksum, fee ceilings) instead of the Privy authorization quorum, and issues no `kms:Sign`, `kms:GetPublicKey`, or paid model call. The Privy `pnpm policy:probe` applies only to `AGENT_SIGNER_PROVIDER=privy`. All operator commands print booleans, public identifiers, and error codes only.

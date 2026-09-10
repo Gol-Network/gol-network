@@ -7,11 +7,14 @@
     "node": ">=22 <23"
   },
   "scripts": {
+    "dev": "bash scripts/dev.sh",
     "build": "pnpm -r --if-present build",
-    "test": "pnpm -r --if-present test",
+    "test": "pnpm -r --if-present test && pnpm langgraph:test",
     "typecheck": "pnpm -r --if-present typecheck",
-    "lint": "pnpm -r --if-present lint",
+    "lint": "pnpm -r --if-present lint && cd langgraph-agent && uv run ruff check .",
     "demo:acceptance": "pnpm --filter @gol/agent exec tsx ../scripts/demo.ts",
+    "langgraph:dev": "bash scripts/langgraph-dev.sh",
+    "langgraph:test": "cd langgraph-agent && uv run pytest",
     "format:check": "prettier --check .",
     "format": "prettier --write .",
     "preflight": "pnpm --filter @gol/agent exec tsx ../scripts/preflight.ts",

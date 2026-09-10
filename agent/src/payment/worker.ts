@@ -46,9 +46,20 @@ interface WorkerContextBase {
   model?: JsonModel;
 }
 
+type RawWorkerContext =
+  | (WorkerContextBase & {
+      mode: 'aws_kms';
+      signer: AgentSigner;
+      kms: KmsExecutionConfig;
+    })
+  | (WorkerContextBase & {
+      mode: 'privy_raw';
+      signer: AgentSigner;
+      kms: KmsExecutionConfig;
+    });
+
 export type WorkerContext =
-  | (WorkerContextBase & { mode: 'privy'; signer: ScopedAgentSigner })
-  | (WorkerContextBase & { mode: 'aws_kms'; signer: AgentSigner; kms: KmsExecutionConfig });
+  (WorkerContextBase & { mode: 'privy'; signer: ScopedAgentSigner }) | RawWorkerContext;
 
 export interface WorkerContextResolver {
   resolve(job: JournalRequest): Promise<WorkerContext>;
@@ -111,8 +122,8 @@ export class PaymentWorker {
     const job = await this.journal.claimNext(this.workerId);
     if (!job) return false;
     const dependencies = await this.resolver.resolve(job);
-    if (dependencies.mode === 'aws_kms') {
-      await this.runKms(job, dependencies);
+    if (dependencies.mode === 'aws_kms' || dependencies.mode === 'privy_raw') {
+      await this.runRaw(job, dependencies);
     } else {
       await this.runPrivy(job, dependencies);
     }
@@ -120,13 +131,10 @@ export class PaymentWorker {
   }
 
   // -----------------------------------------------------------------------------------------------
-  // AWS KMS: persist-before-broadcast state machine.
+  // Provider-neutral raw signing: persist-before-broadcast state machine.
   // -----------------------------------------------------------------------------------------------
 
-  private async runKms(
-    job: JournalRequest,
-    deps: WorkerContext & { mode: 'aws_kms' },
-  ): Promise<void> {
+  private async runRaw(job: JournalRequest, deps: RawWorkerContext): Promise<void> {
     // After raw-transaction persistence, always reuse the exact bytes; never re-sign.
     if (job.signedRawTransaction) {
       await this.rebroadcastAndReconcile(job, deps, job.signedRawTransaction);
@@ -135,7 +143,7 @@ export class PaymentWorker {
 
     // A known hash without stored bytes (legacy or provider path) still reconciles by local hash.
     if (job.txHash) {
-      await this.reconcileKms(job, deps, job.txHash);
+      await this.reconcileRaw(job, deps, job.txHash);
       return;
     }
 
@@ -190,7 +198,7 @@ export class PaymentWorker {
 
   private async constructSignBroadcast(
     job: JournalRequest,
-    deps: WorkerContext & { mode: 'aws_kms' },
+    deps: RawWorkerContext,
     intent: PaymentIntent,
     nonce: number,
   ): Promise<void> {
@@ -312,7 +320,7 @@ export class PaymentWorker {
 
   private async rebroadcastAndReconcile(
     job: JournalRequest,
-    deps: WorkerContext & { mode: 'aws_kms' },
+    deps: RawWorkerContext,
     rawTransaction: string,
     intent?: PaymentIntent,
   ): Promise<void> {
@@ -326,7 +334,7 @@ export class PaymentWorker {
         // The nonce is already mined. Reconcile the locally calculated hash and on-chain state;
         // never fabricate a new transaction.
         const localHash = keccak256(rawTransaction as `0x${string}`);
-        await this.reconcileKms(job, deps, localHash, 'NONCE_TOO_LOW', intent);
+        await this.reconcileRaw(job, deps, localHash, 'NONCE_TOO_LOW', intent);
         return;
       }
       if (error instanceof BroadcastAmbiguousError) {
@@ -339,12 +347,12 @@ export class PaymentWorker {
       }
       throw error;
     }
-    await this.reconcileKms(job, deps, txHash, undefined, intent);
+    await this.reconcileRaw(job, deps, txHash, undefined, intent);
   }
 
-  private async reconcileKms(
+  private async reconcileRaw(
     job: JournalRequest,
-    deps: WorkerContext & { mode: 'aws_kms' },
+    deps: RawWorkerContext,
     txHash: Hex32,
     note?: string,
     providedIntent?: PaymentIntent,

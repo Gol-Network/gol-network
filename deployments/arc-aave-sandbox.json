@@ -1,0 +1,15 @@
+{
+  "status": "not_deployed",
+  "kind": "aave-v3-compatible-testnet-sandbox",
+  "officialAaveDeployment": false,
+  "chainId": 5042002,
+  "network": "arc-testnet",
+  "usdc": "0x3600000000000000000000000000000000000000",
+  "pool": null,
+  "aToken": null,
+  "variableDebtToken": null,
+  "deploymentBlock": null,
+  "deploymentTransaction": null,
+  "aaveOriginCommit": "8305565ae342f1773c42cd2e4593f175fe5968a0",
+  "verificationUrl": null
+}

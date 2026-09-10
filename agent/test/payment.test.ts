@@ -250,7 +250,7 @@ describe('payment submission', () => {
 describe('canonical restricted signer policy', () => {
   const policy = buildAgentSignerPolicy(ACCOUNT);
   const allowed = {
-    method: 'eth_sendTransaction',
+    method: 'eth_signTransaction',
     chainId: ARC_TESTNET_CHAIN_ID,
     to: ACCOUNT,
     value: 0n,

@@ -32,10 +32,11 @@ export async function GET() {
   }
 
   const { public: publicConfig, server } = config;
-  const [database, chain, graph] = await Promise.all([
+  const [database, chain, graph, langgraphAgent] = await Promise.all([
     checkDatabase(),
     checkChain(publicConfig.rpcUrl),
     checkGraph(server.graphQueryUrl, server.graphApiKey),
+    checkLangGraphAgent(),
   ]);
 
   // Configuration/readiness only. No `kms:Sign` and no `kms:GetPublicKey` call is ever made here:
@@ -44,7 +45,10 @@ export async function GET() {
     server.awsKmsSignerKeyArn && server.awsKmsSignerRegion && server.awsKmsSignerAddress,
   );
   const privySignerConfigured = Boolean(
-    server.privyAuthorizationKeyId && server.privyAuthorizationPrivateKey,
+    server.privyAuthorizationKeyId &&
+    server.privyAuthorizationPrivateKey &&
+    process.env.AGENT_MAX_GAS &&
+    process.env.AGENT_MAX_FEE_PER_GAS,
   );
   const signerReady =
     server.agentSignerProvider === 'aws_kms' ? kmsSignerConfigured : privySignerConfigured;
@@ -53,6 +57,7 @@ export async function GET() {
     database,
     chain,
     graph,
+    langgraphAgent,
     // Presence only. Verifying these providers for real belongs to the redacted preflight command.
     privyConfigured: Boolean(
       server.privyAppId && server.privyAppSecret && server.privyVerificationKey,
@@ -70,6 +75,7 @@ export async function GET() {
   const ready =
     components.database.ok &&
     components.chain.ok &&
+    components.langgraphAgent.ok &&
     components.privyConfigured &&
     signerReady &&
     components.modelConfigured &&
@@ -88,6 +94,23 @@ export async function GET() {
     },
     { status: ready ? 200 : 503 },
   );
+}
+
+async function checkLangGraphAgent(): Promise<{ ok: boolean; error?: string }> {
+  const agentUrl = process.env.LANGGRAPH_AGENT_URL?.trim() || 'http://127.0.0.1:8124/agent';
+  try {
+    const response = await fetch(new URL('/health', agentUrl), {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(CHECK_TIMEOUT_MS),
+    });
+    if (!response.ok) return { ok: false, error: 'LANGGRAPH_AGENT_UNAVAILABLE' };
+    const body = (await response.json()) as { status?: string };
+    return body.status === 'ok'
+      ? { ok: true }
+      : { ok: false, error: 'LANGGRAPH_AGENT_UNAVAILABLE' };
+  } catch {
+    return { ok: false, error: 'LANGGRAPH_AGENT_UNAVAILABLE' };
+  }
 }
 
 async function checkDatabase(): Promise<{ ok: boolean; error?: string }> {
