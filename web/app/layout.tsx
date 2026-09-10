@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { Providers } from './providers';
 import { publicConfigResult } from '@/server/env';
 import { ConfigurationNotice } from '@/components/ConfigurationNotice';
+import { TabNav } from '@/components/TabNav';
 import './globals.css';
 
 // Public configuration is read when the container starts, not when the image is built, so the
@@ -24,7 +25,10 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
     <html lang="en">
       <body>
         {result.ok ? (
-          <Providers config={result.config}>{children}</Providers>
+          <Providers config={result.config}>
+            <TabNav />
+            {children}
+          </Providers>
         ) : (
           <ConfigurationNotice fields={result.fields} />
         )}

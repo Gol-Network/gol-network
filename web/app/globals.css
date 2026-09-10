@@ -1264,3 +1264,335 @@ footer {
   cursor: not-allowed;
   opacity: 0.45;
 }
+
+/* ======================================================================== */
+/* Product-level tab strip                                                   */
+/* ======================================================================== */
+.app-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: color-mix(in srgb, var(--paper) 92%, transparent);
+  border-bottom: 1px solid var(--line);
+  backdrop-filter: blur(6px);
+}
+.app-tabs-inner {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 0 54px;
+  height: 46px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+.app-tabs-brand {
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  font-size: 13px;
+}
+.app-tabs-list {
+  display: flex;
+  gap: 4px;
+}
+.app-tab {
+  text-decoration: none;
+  color: var(--muted);
+  font:
+    700 10px 'DM Mono',
+    monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 7px 12px;
+  border-radius: 999px;
+}
+.app-tab.selected {
+  color: var(--ink);
+  background: var(--paper-deep);
+}
+.app-tabs-tag {
+  margin-left: auto;
+  color: var(--coral);
+  font:
+    500 9px 'DM Mono',
+    monospace;
+  letter-spacing: 0.16em;
+}
+@media (max-width: 900px) {
+  .app-tabs-inner {
+    padding: 0 22px;
+  }
+}
+@media (max-width: 560px) {
+  .app-tabs-tag {
+    display: none;
+  }
+}
+
+/* ======================================================================== */
+/* Tokenized stocks tab (Base hackathon mock)                                */
+/* ======================================================================== */
+.stack {
+  display: grid;
+  gap: 18px;
+  align-content: start;
+}
+.audit-section {
+  margin-top: 18px;
+}
+.stocks-boot {
+  padding: 120px 54px;
+  text-align: center;
+  color: var(--muted);
+}
+.up {
+  color: var(--green);
+}
+.down {
+  color: var(--coral);
+}
+
+/* Stock table */
+.stock-table-wrap {
+  overflow-x: auto;
+  margin-top: 18px;
+}
+.stock-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.stock-table th {
+  text-align: left;
+  color: var(--muted);
+  font:
+    700 9px 'DM Mono',
+    monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 0 10px 10px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.stock-table th.num,
+.stock-table td.num {
+  text-align: right;
+}
+.stock-table td {
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.stock-table tbody tr {
+  cursor: pointer;
+}
+.stock-table tbody tr:hover {
+  background: var(--paper);
+}
+.stock-table tbody tr:focus-visible {
+  outline: 2px solid var(--coral);
+  outline-offset: -2px;
+}
+.stock-id {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.stock-id > div {
+  display: flex;
+  flex-direction: column;
+}
+.stock-id strong {
+  font-size: 13px;
+}
+.stock-id small {
+  color: var(--muted);
+  font-size: 10px;
+}
+.stock-badge {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--paper-deep);
+  border: 1px solid var(--line);
+  font:
+    700 9px 'DM Mono',
+    monospace;
+}
+.row-spark {
+  display: inline-block;
+  width: 76px;
+  height: 26px;
+}
+.spark {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.stock-table td.chev {
+  color: var(--muted);
+  text-align: right;
+  width: 20px;
+}
+@media (max-width: 720px) {
+  .stock-table .col-wide {
+    display: none;
+  }
+}
+@media (max-width: 560px) {
+  .stock-table .col-trend {
+    display: none;
+  }
+}
+
+/* Price chart */
+.price-chart {
+  margin: 16px 0 4px;
+}
+.price-chart svg {
+  width: 100%;
+  height: 180px;
+  display: block;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.price-chart figcaption {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font:
+    9px 'DM Mono',
+    monospace;
+  letter-spacing: 0.08em;
+  margin-top: 6px;
+}
+
+/* Token detail */
+.back-link {
+  display: inline-block;
+  width: auto;
+  margin-bottom: 10px;
+  text-decoration: none;
+  color: var(--coral);
+}
+.detail-price {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.detail-price strong {
+  font-size: 34px;
+  letter-spacing: -0.04em;
+}
+.detail-price span {
+  font-size: 12px;
+}
+.chart-ranges {
+  display: inline-flex;
+  background: var(--paper);
+  border-radius: 999px;
+  padding: 3px;
+  margin-top: 14px;
+}
+.chart-ranges button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font:
+    700 10px 'DM Mono',
+    monospace;
+  padding: 6px 12px;
+  border-radius: 999px;
+}
+.chart-ranges .selected {
+  background: var(--ink);
+  color: white;
+}
+.detail-metrics {
+  grid-template-columns: repeat(2, 1fr);
+  margin-top: 18px;
+}
+
+/* Portfolio holdings */
+.holdings {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+}
+.holdings li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+.holdings li:hover {
+  background: var(--paper);
+}
+.holdings li:focus-visible {
+  outline: 2px solid var(--coral);
+  outline-offset: -2px;
+}
+.holdings li > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.holdings strong {
+  font-size: 13px;
+}
+.holdings small {
+  color: var(--muted);
+  font-size: 10px;
+}
+.holding-val {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  text-align: right;
+}
+
+/* Trade console status tones */
+.trade-state.executed strong {
+  color: var(--green);
+}
+.trade-state.refused strong {
+  color: var(--amber);
+}
+.trade-state.refused i {
+  background: var(--amber);
+  box-shadow: 0 0 0 3px #b2651c1b;
+}
+.trade-state.info i {
+  background: var(--muted);
+  box-shadow: 0 0 0 3px #6e746e1b;
+}
+
+/* Mandate allowlist chips */
+.token-allowlist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.token-allowlist button {
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 5px 9px;
+  font:
+    700 9px 'DM Mono',
+    monospace;
+  letter-spacing: 0.04em;
+}
+.token-allowlist button.selected {
+  background: var(--ink);
+  color: white;
+  border-color: var(--ink);
+}
