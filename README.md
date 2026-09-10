@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://gol.network">
-    <img src="assets/gol-logo.png" width="112" alt="GOL logo" />
+    <img src="web/public/gol-mark-blue.svg" width="88" alt="GOL logo" />
   </a>
 </p>
 
@@ -16,8 +16,6 @@
   <a href="spec/deployment-status.md">Deployment status</a> ·
   <a href="deploy/README.md">Operations</a>
 </p>
-
-![GOL product overview](assets/gol-cover-640x360.png)
 
 GOL is an account and execution system for AI agents on Arc testnet. An owner defines a mandate—
 approved recipients, payment limits, cumulative budget, and expiry—and a separate agent can act only
@@ -53,17 +51,148 @@ run automatically; every wallet write is prepared for explicit human review.
 
 ## System design
 
-![GOL production architecture](assets/architecture.png)
+```mermaid
+flowchart TB
+  subgraph CLIENT["Owner device — no server signing credentials"]
+    direction LR
+    OWNER["Owner"]
+    UI["Next.js client<br/>Dashboard · Activity · Rules · Agent chat"]
+    REVIEW["Human review<br/>Account · Mandate · Payment · Aave transaction"]
+    WALLET["Privy embedded wallet<br/>or linked EOA"]
 
-The authority path is deliberately split:
+    OWNER --> UI
+    UI --> REVIEW
+    OWNER --> WALLET
+    REVIEW -->|"explicit approval"| WALLET
+  end
 
-1. The owner signs account and mandate changes directly in the browser wallet.
-2. The web API authenticates requests and writes payment instructions to a PostgreSQL journal.
-3. A persistent worker validates the request, constructs the exact transaction, and asks the
-   configured restricted signer to sign it.
-4. `GolAccount` independently enforces the active mandate and emits `Executed` or `Refused`.
-5. The Graph indexes those events, and the application preserves freshness and provenance when
-   presenting them.
+  subgraph EDGE["Public application boundary"]
+    direction LR
+    CADDY["Caddy<br/>TLS ingress"]
+    NEXT["Next.js server<br/>runtime config · validation · auth"]
+    ACCOUNT_API["Account and payment APIs"]
+    AGENT_PROXY["AG-UI proxy<br/>validated SSE passthrough"]
+    QUERY_API["Activity and question APIs"]
+
+    CADDY --> NEXT
+    NEXT --> ACCOUNT_API
+    NEXT --> AGENT_PROXY
+    NEXT --> QUERY_API
+  end
+
+  subgraph IDENTITY["Identity provider"]
+    PRIVY_AUTH["Privy authentication<br/>session verification · owner wallet"]
+  end
+
+  subgraph AGENT_PLANE["Private conversational-agent boundary — no wallet or database credential"]
+    direction LR
+    LANGGRAPH["LangGraph + FastAPI<br/>run state · tool iteration · AG-UI events"]
+    TOOL_ROUTER["Allowlisted tool registry<br/>40 Aave + 12 GOL tools"]
+    OPENAI_AGENT["OpenAI model<br/>tool selection and response text"]
+    AAVE_MCP["Aave MCP<br/>read · simulate · prepare unsigned transaction"]
+    GOL_HANDOFF["Typed GOL client handoff<br/>never signs or submits"]
+
+    LANGGRAPH <--> OPENAI_AGENT
+    LANGGRAPH --> TOOL_ROUTER
+    TOOL_ROUTER <--> AAVE_MCP
+    TOOL_ROUTER --> GOL_HANDOFF
+  end
+
+  subgraph PAYMENT_PLANE["Private durable-execution boundary"]
+    direction LR
+    JOURNAL[("PostgreSQL journal<br/>idempotency · leases · recovery")]
+    WORKER["Persistent payment worker<br/>claim · parse · reconcile"]
+    ENVELOPE["Transaction envelope validator<br/>chain · account · value · gas ceilings"]
+    SIGNER["Restricted agent signer<br/>AWS KMS or Privy"]
+    OPENAI_PARSE["Bounded model adapter<br/>recipient + exact USDC amount"]
+
+    JOURNAL -->|"leased request"| WORKER
+    WORKER <--> OPENAI_PARSE
+    WORKER --> ENVELOPE
+    ENVELOPE --> SIGNER
+    SIGNER -->|"signed raw transaction"| WORKER
+    WORKER -->|"persist before broadcast"| JOURNAL
+  end
+
+  subgraph ARC["Arc testnet — authoritative execution"]
+    direction LR
+    RPC["Arc RPC"]
+    FACTORY["GolAccountFactory"]
+    ACCOUNT["GolAccount<br/>owner · mandate · replay protection"]
+    USDC["Official Arc USDC"]
+
+    RPC --> FACTORY
+    FACTORY -->|"one account per owner"| ACCOUNT
+    RPC --> ACCOUNT
+    ACCOUNT -->|"allowed transfer"| USDC
+    USDC -->|"balance and transfer result"| ACCOUNT
+  end
+
+  subgraph EVIDENCE["Indexed evidence boundary"]
+    direction LR
+    EVENTS["Executed · Refused<br/>Mandate · Revocation events"]
+    GRAPH["The Graph subgraph<br/>deterministic event indexing"]
+    GRAPH_API["GraphQL provider<br/>records · indexed block · freshness"]
+
+    EVENTS --> GRAPH
+    GRAPH --> GRAPH_API
+  end
+
+  UI <-->|"HTTPS"| CADDY
+  NEXT <-->|"verify session"| PRIVY_AUTH
+  AGENT_PROXY <-->|"authenticated AG-UI stream"| LANGGRAPH
+  GOL_HANDOFF -->|"open owner review"| AGENT_PROXY
+  AAVE_MCP -->|"structured result or unsigned tx"| LANGGRAPH
+  ACCOUNT_API -->|"queue instruction"| JOURNAL
+  WORKER -->|"broadcast stored bytes"| RPC
+  WALLET -->|"owner-signed setup and reviewed writes"| RPC
+  ACCOUNT --> EVENTS
+  GRAPH_API --> QUERY_API
+  QUERY_API -->|"scoped records + citations"| UI
+```
+
+### Payment execution lifecycle
+
+```mermaid
+stateDiagram-v2
+  [*] --> queued: authenticated instruction
+  queued --> needs_clarification: recipient or amount is ambiguous
+  queued --> signing_prepared: intent validated and nonce reserved
+  signing_prepared --> signed: exact raw transaction persisted
+  signed --> submitted: broadcast attempted
+  submitted --> pending: transaction visible, receipt pending
+  pending --> executed: contract transferred USDC
+  pending --> refused: contract recorded a policy refusal
+
+  queued --> signer_blocked: setup, mandate, signer, or gas guard fails
+  signing_prepared --> signer_blocked: envelope or signer rejects
+  submitted --> unknown: submission cannot yet be proven
+  pending --> unknown: final outcome cannot yet be proven
+  queued --> technical_failure: deterministic runtime or provider failure
+
+  executed --> [*]
+  refused --> [*]
+  needs_clarification --> [*]
+  signer_blocked --> [*]
+  technical_failure --> [*]
+  unknown --> [*]
+```
+
+The owner-signed and automated payment-authority paths converge at the contract. Owner setup actions
+and reviewed Aave transactions are signed in the browser. Automated GOL payments travel through the
+durable journal, the envelope validator, and the restricted signer before reaching Arc. Signed bytes
+are persisted before broadcast, so recovery reuses the same transaction instead of signing a
+replacement.
+
+`GolAccount` is the payment-policy authority. It checks the active agent, expiry, recipient,
+per-payment cap, cumulative cap, revocation, and request replay before moving USDC. A valid policy
+denial emits `Refused` and moves no funds; malformed calls and technical reverts are not mislabeled as
+policy decisions.
+
+The evidence path remains separate from execution. Confirmed receipts appear immediately as
+"on-chain, indexing pending" records, then The Graph replaces them with indexed events carrying block
+and transaction provenance. Query APIs preserve current, catching-up, stale, partial, unavailable,
+and integrity-error states rather than converting missing evidence into a successful result.
 
 The model never receives signing credentials, selects request IDs, decides transaction outcomes, or
 bypasses wallet review. GOL-native LangGraph tools return typed client handoffs instead of mutating
