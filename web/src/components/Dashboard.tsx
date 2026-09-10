@@ -1,15 +1,28 @@
 'use client';
 
+import { formatUsdc, parseUsdc, type ActivityPage, type GroundedAnswer } from '@gol/protocol';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
-  formatNativeGas,
-  formatUsdc,
-  parseUsdc,
-  type ActivityPage,
-  type GroundedAnswer,
-} from '@gol/protocol';
-import { useMemo, useState, type FormEvent } from 'react';
+  ArrowUpRight,
+  CircleAlert,
+  CirclePlus,
+  Copy,
+  KeyRound,
+  Mail,
+  Moon,
+  ShieldCheck,
+  Sun,
+  Wallet,
+  WalletCards,
+} from 'lucide-react';
+import { SiGoogle } from 'react-icons/si';
 import { explorerAddressUrl, explorerTxUrl, type PublicConfig } from '@/config';
 import { PAYMENT_STAGES, TRANSACTION_PHASES } from '@/client/stages';
+import {
+  extractPreparedAaveReview,
+  type PreparedAaveReview,
+  type PreparedAaveTransaction,
+} from '@/client/aave-transactions';
 import {
   filterTimeline,
   mergeTimeline,
@@ -21,11 +34,35 @@ import type {
   AuthState,
   InstructionPreview,
   MandateDraft,
+  MoneyExecutionResult,
+  MoneyReceiveInfo,
+  MoneySendInput,
+  MoneySwapInput,
+  MoneySwapQuote,
+  MoneyTokenOption,
   OwnerActionKind,
+  TransactionReporter,
   TransactionState,
 } from '@/client/types';
 import type { PaymentView } from './GolApp';
-import type { SetupStep } from './setup-steps';
+import { nextIncompleteStep, type SetupStep } from './setup-steps';
+import { WalletAccountPill } from './wallet-account-pill';
+import { AgentChat } from '@/components/ui/agent-chat';
+import { ActionDrawer } from '@/components/ui/action-drawer';
+import { AaveLogo } from '@/components/ui/aave-logo';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { DitherBackground } from '@/components/ui/dither-background';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
+import { Separator } from '@/components/ui/separator';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Textarea } from '@/components/ui/textarea';
 
 export interface TransferReview {
   kind: 'fund_agent_gas' | 'fund_account' | 'withdraw';
@@ -61,10 +98,22 @@ export interface DashboardProps {
   onSignMandate: () => void;
   onRevoke: () => void;
   onReviewWithdraw: (amountUnits: string) => void;
+  onExecuteAaveTransaction: (transaction: PreparedAaveTransaction) => void;
+  onListMoneyTokens: (chainId: number) => Promise<MoneyTokenOption[]>;
+  onQuoteMoneySwap: (input: MoneySwapInput) => Promise<MoneySwapQuote>;
+  onExecuteMoneySwap: (
+    input: MoneySwapInput,
+    report: TransactionReporter,
+  ) => Promise<MoneyExecutionResult>;
+  onExecuteMoneySend: (
+    input: MoneySendInput,
+    report: TransactionReporter,
+  ) => Promise<MoneyExecutionResult>;
+  onGetMoneyReceiveInfo: (chainId: number, token: string) => Promise<MoneyReceiveInfo>;
   instruction: string;
   setInstruction: (value: string) => void;
   preview: InstructionPreview | null;
-  onPreview: (event: FormEvent) => void;
+  onPreview: (instruction?: string) => void;
   onSubmitInstruction: () => void;
   onCancelPreview: () => void;
   payment: PaymentView;
@@ -74,24 +123,34 @@ export interface DashboardProps {
   indexingWindowClosed: boolean;
   checkingIndexing: boolean;
   onCheckIndexing: () => void;
+  onRefreshAccount: () => void;
   question: string;
   setQuestion: (value: string) => void;
-  onAsk: (event: FormEvent) => void;
+  onAsk: (question?: string) => void;
   answer: GroundedAnswer | null;
   asking: boolean;
 }
 
+type ThemeMode = 'dark' | 'light';
+
 export function Dashboard(props: DashboardProps) {
   const { config, account } = props;
+  const [theme, setTheme] = useState<ThemeMode>('dark');
   const [filter, setFilter] = useState<TimelineFilter>('ALL');
-  const [exportWarningOpen, setExportWarningOpen] = useState(false);
+  const [tab, setTab] = useState('accounts');
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [chatDraft, setChatDraft] = useState(props.instruction);
+  const [exportTarget, setExportTarget] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [balanceAction, setBalanceAction] = useState<'deposit' | 'withdraw' | null>(null);
-  const mandate = account?.mandate ?? null;
-  const cap = mandate?.cumulativeCapUnits ?? config.accountTargetUnits;
-  const spent = mandate?.spentUnits ?? '0';
-  const remaining = BigInt(cap) - BigInt(spent);
+  const [aaveReview, setAaveReview] = useState<PreparedAaveReview | null>(null);
+  const [desktopWorkspace, setDesktopWorkspace] = useState(false);
 
+  const mandate = account?.mandate ?? null;
+  const capUnits = BigInt(mandate?.cumulativeCapUnits ?? config.accountTargetUnits);
+  const spentUnits = BigInt(mandate?.spentUnits ?? '0');
+  const boundedSpentUnits = spentUnits > capUnits ? capUnits : spentUnits;
+  const remainingUnits = capUnits - boundedSpentUnits;
   const source =
     props.page && props.page.freshness !== 'unavailable' ? props.page : props.lastGoodPage;
   const entries = useMemo(
@@ -99,421 +158,921 @@ export function Dashboard(props: DashboardProps) {
     [source, props.pending],
   );
   const visible = useMemo(() => filterTimeline(entries, filter), [entries, filter]);
+  const ownerWallet = props.auth.wallets?.find(
+    (wallet) => wallet.address.toLowerCase() === account?.ownerAddress?.toLowerCase(),
+  );
+  const canExportOwner = Boolean(
+    account?.ownerAddress &&
+    props.auth.exportWallet &&
+    (!props.auth.wallets || ownerWallet?.exportable),
+  );
+
+  useEffect(() => {
+    const savedTheme = window.localStorage.getItem('gol-theme');
+    if (savedTheme === 'dark' || savedTheme === 'light') {
+      setTheme(savedTheme);
+      return;
+    }
+    setTheme(window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+  }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle('theme-dark', theme === 'dark');
+    root.classList.toggle('theme-light', theme === 'light');
+    return () => {
+      root.classList.remove('theme-dark', 'theme-light');
+    };
+  }, [theme]);
+
+  useEffect(() => {
+    if (['executed', 'refused'].includes(props.payment.stage)) setTab('activity');
+  }, [props.payment.stage]);
+
+  useEffect(() => {
+    const media = window.matchMedia('(min-width: 1280px)');
+    const updateWorkspaceMode = () => setDesktopWorkspace(media.matches);
+    updateWorkspaceMode();
+    media.addEventListener('change', updateWorkspaceMode);
+    return () => media.removeEventListener('change', updateWorkspaceMode);
+  }, []);
+
+  const selectTheme = (nextTheme: ThemeMode) => {
+    setTheme(nextTheme);
+    window.localStorage.setItem('gol-theme', nextTheme);
+  };
 
   if (!props.auth.authenticated) {
-    return <SignInGate config={config} auth={props.auth} />;
+    return (
+      <SignInGate config={config} auth={props.auth} theme={theme} onThemeChange={selectTheme} />
+    );
+  }
+
+  const nextSetupStep = nextIncompleteStep(props.steps);
+  if (nextSetupStep) {
+    return (
+      <>
+        <SetupGate
+          {...props}
+          theme={theme}
+          onThemeChange={selectTheme}
+          nextStep={nextSetupStep}
+          onOpenActions={() => setDrawerOpen(true)}
+          onExport={(address) => {
+            setExportError(null);
+            setExportTarget(address);
+          }}
+          exportTarget={exportTarget}
+          exportError={exportError}
+          onCloseExport={() => {
+            setExportError(null);
+            setExportTarget(null);
+          }}
+          onContinueExport={async () => {
+            if (!exportTarget) return;
+            setExportError(null);
+            try {
+              await props.auth.exportWallet?.(exportTarget);
+              setExportTarget(null);
+            } catch (error) {
+              setExportError(error instanceof Error ? error.message : 'Wallet export failed.');
+            }
+          }}
+        />
+        <ActionDrawer
+          open={drawerOpen}
+          recipientLabel={config.recipientLabel}
+          recipientAddress={account?.recipients[0]?.address}
+          onClose={() => setDrawerOpen(false)}
+          onListTokens={props.onListMoneyTokens}
+          onQuote={props.onQuoteMoneySwap}
+          onSwap={props.onExecuteMoneySwap}
+          onSend={props.onExecuteMoneySend}
+          onReceive={props.onGetMoneyReceiveInfo}
+        />
+      </>
+    );
   }
 
   return (
-    <main>
-      <header className="topbar">
-        <a className="brand" href="#top">
-          <span className="brand-mark">G</span>
-          <span>GOL</span>
-        </a>
-        <div className="top-actions">
-          <span className="network">
-            <i /> {config.chainName}
-          </span>
-          {!props.auth.ready ? (
-            <button className="ghost" disabled>
-              Initializing
-            </button>
-          ) : props.auth.authenticated ? (
-            <button className="ghost" onClick={() => props.auth.logout()}>
-              {props.auth.label} · Sign out
-            </button>
-          ) : (
-            <button className="ghost" onClick={() => props.auth.login()}>
-              {props.auth.label}
-            </button>
+    <main
+      className={`theme-${theme} min-h-screen max-w-none bg-background text-foreground transition-colors xl:h-screen xl:overflow-hidden`}
+      id="top"
+    >
+      <header className="flex h-[68px] items-center justify-between border-b border-border px-4 sm:h-[76px] sm:px-7">
+        <div className="flex items-center gap-3">
+          <a className="flex items-center gap-2.5 text-sm font-bold tracking-[.16em]" href="#top">
+            <img className="size-8 sm:size-9" src="/gol-mark-blue.svg" alt="" />
+            <span className="font-mono text-sm tracking-[.18em] sm:text-base sm:tracking-[.22em]">
+              GOL
+            </span>
+          </a>
+          {config.mode === 'fixture' && (
+            <Badge variant="warning" className="font-mono text-[9px] tracking-wider">
+              FIXTURE MODE
+            </Badge>
           )}
+        </div>
+        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+          <ThemeIconButton theme={theme} onChange={selectTheme} />
+          <WalletAccountPill
+            config={config}
+            account={account}
+            auth={props.auth}
+            onExport={(address) => {
+              setExportError(null);
+              setExportTarget(address);
+            }}
+          />
         </div>
       </header>
 
-      <p className={`mode-banner ${config.mode}`} role="status">
-        <strong>{config.mode === 'live' ? 'LIVE PROVIDERS' : 'FIXTURE MODE'}</strong>
-        <span>
-          {config.mode === 'live'
-            ? 'Every result below comes from Arc testnet, the configured signer, and the indexed subgraph.'
-            : 'Simulated provider responses. Nothing here is a chain, signer, or model result, and it is never evidence.'}
-        </span>
-      </p>
+      <div className="xl:h-[calc(100vh-76px)]">
+        <ResizablePanelGroup
+          id="dashboard-workspace"
+          orientation={desktopWorkspace ? 'horizontal' : 'vertical'}
+          disabled={!desktopWorkspace}
+          className="gap-4 px-3 py-3 sm:px-5 sm:py-4 xl:gap-0"
+        >
+          <ResizablePanel
+            id="account-panel"
+            defaultSize={desktopWorkspace ? '70%' : undefined}
+            minSize={desktopWorkspace ? '30%' : undefined}
+            maxSize={desktopWorkspace ? '70%' : undefined}
+            className="@container min-w-0 xl:pr-2"
+          >
+            <section className="min-w-0 xl:h-full xl:min-h-0">
+              <div className="h-full overflow-y-auto px-2 py-4 sm:px-4 sm:py-6">
+                <AccountProfileHeader
+                  config={config}
+                  account={account}
+                  mandateActive={Boolean(mandate && !mandate.revoked)}
+                  remainingUnits={remainingUnits}
+                  onActions={() => setDrawerOpen(true)}
+                  onDeposit={() => setBalanceAction('deposit')}
+                  onPay={() => setChatDraft(`Pay 10 USDC to ${config.recipientLabel}`)}
+                />
 
-      <section className="hero" id="top">
-        <div>
-          <p className="eyebrow">CONTROLLED AGENT PAYMENTS</p>
-          <h1>
-            Give the agent a budget.
-            <br />
-            <em>Keep the authority.</em>
-          </h1>
-          <p className="lede">
-            A USDC account that pays approved contractors, refuses policy breaches on-chain, and
-            explains every outcome with indexed evidence.
-          </p>
-        </div>
-        <div className="hero-proof">
-          <div>
-            <span>Mandate</span>
-            <strong>
-              {account && account.activeMandateId !== '0'
-                ? `#${account.activeMandateId} active`
-                : 'Not active'}
-            </strong>
-          </div>
-          <div>
-            <span>Spent</span>
-            <strong>{formatUsdc(BigInt(spent))} USDC</strong>
-          </div>
-          <div>
-            <span>Remaining</span>
-            <strong className="coral">{formatUsdc(remaining)} USDC</strong>
-          </div>
-        </div>
-      </section>
+                <Tabs value={tab} onValueChange={setTab} className="mt-7">
+                  <div className="flex items-center justify-between border-b border-border">
+                    <TabsList className="gap-7">
+                      {(
+                        [
+                          ['accounts', 'Overview'],
+                          ['activity', 'Activity'],
+                          ['rules', 'Payment rules'],
+                        ] as const
+                      ).map(([value, label]) => (
+                        <TabsTrigger
+                          key={value}
+                          value={value}
+                          className="relative pb-3 text-sm font-medium text-muted-foreground transition-colors after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:scale-x-0 after:bg-primary after:transition-transform data-[state=active]:text-foreground data-[state=active]:after:scale-x-100"
+                        >
+                          {label}
+                        </TabsTrigger>
+                      ))}
+                    </TabsList>
+                    <span className="hidden pb-3 text-[11px] text-muted-foreground @min-[620px]:inline">
+                      Indexed by The Graph
+                    </span>
+                  </div>
 
-      <section className="grid primary-grid">
-        <article className="panel mandate-panel">
-          <div className="panel-heading">
-            <div>
-              <p className="kicker">OWNER CONTROL</p>
-              <h2>Accounts and mandate</h2>
-            </div>
-            <span className={`status ${mandate && !mandate.revoked ? 'active' : 'refused'}`}>
-              {mandate && !mandate.revoked ? 'Active' : 'Setup required'}
-            </span>
-          </div>
+                  <TabsContent value="activity" className="mt-6">
+                    <WorkspaceActivity
+                      config={config}
+                      source={source}
+                      visible={visible}
+                      filter={filter}
+                      setFilter={setFilter}
+                      pendingCount={props.pending.length}
+                      indexingWindowClosed={props.indexingWindowClosed}
+                      checkingIndexing={props.checkingIndexing}
+                      onCheckIndexing={props.onCheckIndexing}
+                    />
+                  </TabsContent>
 
-          <AccountAndMandateControls
-            steps={props.steps}
-            busy={props.busy}
-            config={config}
-            account={account}
-            onExport={() => setExportWarningOpen(true)}
-            onAction={(action) => {
-              if (action === 'create_account') props.onCreateAccount();
-              if (action === 'provision_agent') props.setConsentOpen(true);
-              if (action === 'fund_agent_gas') props.onReviewAgentGas();
-              if (action === 'fund_account') setBalanceAction('deposit');
-              if (action === 'withdraw') setBalanceAction('withdraw');
-              if (action === 'sign_mandate') props.onReviewMandate();
-            }}
+                  <TabsContent value="accounts" className="mt-6 space-y-4">
+                    <div>
+                      <h2 className="text-xl font-semibold tracking-tight">How your money works</h2>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        You keep control. GOL can only use the payment funds and rules shown here.
+                      </p>
+                    </div>
+                    <AccountAndMandateControls
+                      steps={props.steps}
+                      busy={props.busy}
+                      config={config}
+                      account={account}
+                      {...(canExportOwner
+                        ? {
+                            onExport: () => {
+                              setExportError(null);
+                              setExportTarget(account!.ownerAddress);
+                            },
+                          }
+                        : {})}
+                      onAction={(action) => {
+                        if (action === 'create_account') props.onCreateAccount();
+                        if (action === 'provision_agent') props.setConsentOpen(true);
+                        if (action === 'fund_agent_gas') props.onReviewAgentGas();
+                        if (action === 'fund_account') setBalanceAction('deposit');
+                        if (action === 'withdraw') setBalanceAction('withdraw');
+                        if (action === 'sign_mandate') props.onReviewMandate();
+                      }}
+                    />
+                  </TabsContent>
+
+                  <TabsContent value="rules" className="mt-6">
+                    <div className="grid gap-3 @min-[600px]:grid-cols-3">
+                      <RuleCard
+                        label="One payment max"
+                        value={
+                          mandate
+                            ? formatUsdc(BigInt(mandate.perPaymentCapUnits)) + ' USDC'
+                            : 'Not configured'
+                        }
+                      />
+                      <RuleCard
+                        label="Total limit"
+                        value={
+                          mandate
+                            ? formatUsdc(BigInt(mandate.cumulativeCapUnits)) + ' USDC'
+                            : 'Not configured'
+                        }
+                      />
+                      <RuleCard
+                        label="Active until"
+                        value={
+                          mandate
+                            ? new Date(Number(mandate.expiresAt) * 1000).toLocaleDateString()
+                            : 'Not configured'
+                        }
+                      />
+                    </div>
+                    <Card className="mt-4 bg-muted shadow-none">
+                      <CardContent className="p-5">
+                        <div className="flex items-start justify-between gap-4">
+                          <div>
+                            <span className="font-mono text-[9px] uppercase tracking-[.16em] text-primary">
+                              Recipient
+                            </span>
+                            <h3 className="mt-2 text-base font-semibold">
+                              The only wallet GOL can pay
+                            </h3>
+                            <p className="mt-1 text-sm text-muted-foreground">
+                              {account?.recipients[0]?.label ?? 'No recipient configured'}
+                            </p>
+                            {account?.recipients[0]?.address && (
+                              <code className="mt-3 block text-[11px] text-muted-foreground">
+                                {shorten(account.recipients[0].address)}
+                              </code>
+                            )}
+                          </div>
+                          <ShieldCheck className="text-primary" />
+                        </div>
+                      </CardContent>
+                    </Card>
+                    <Button
+                      className="mt-5"
+                      variant="outline"
+                      onClick={props.onRevoke}
+                      disabled={!mandate || mandate.revoked || props.busy !== null}
+                    >
+                      Turn off agent payments
+                    </Button>
+                  </TabsContent>
+                </Tabs>
+
+                {props.consentOpen && (
+                  <ConsentPanel
+                    config={config}
+                    account={account}
+                    recipientInput={props.recipientInput}
+                    setRecipientInput={props.setRecipientInput}
+                    onCancel={() => props.setConsentOpen(false)}
+                    onConfirm={props.onProvisionAgent}
+                    disabled={props.busy !== null}
+                  />
+                )}
+                {props.transferReview && (
+                  <TransferReviewPanel
+                    review={props.transferReview}
+                    onCancel={() => props.setTransferReview(null)}
+                    onConfirm={props.onConfirmTransfer}
+                    disabled={props.busy !== null}
+                  />
+                )}
+                {balanceAction && account?.accountAddress && (
+                  <AmountEntryPanel
+                    action={balanceAction}
+                    availableUnits={account.balances.accountUsdcUnits}
+                    onCancel={() => setBalanceAction(null)}
+                    onConfirm={(amountUnits) => {
+                      setBalanceAction(null);
+                      if (balanceAction === 'deposit') props.onReviewAccountFunding(amountUnits);
+                      else props.onReviewWithdraw(amountUnits);
+                    }}
+                  />
+                )}
+                {props.mandateReview && (
+                  <MandateReviewPanel
+                    draft={props.mandateReview}
+                    onChange={props.setMandateReview}
+                    onCancel={() => props.setMandateReview(null)}
+                    onConfirm={props.onSignMandate}
+                    disabled={props.busy !== null}
+                  />
+                )}
+                {aaveReview && (
+                  <AaveTransactionReview
+                    review={aaveReview}
+                    onCancel={() => setAaveReview(null)}
+                    onConfirm={() => {
+                      const transaction = aaveReview.transaction;
+                      setAaveReview(null);
+                      props.onExecuteAaveTransaction(transaction);
+                    }}
+                    disabled={props.busy !== null}
+                  />
+                )}
+                <TransactionStatus tx={props.tx} config={config} />
+                {exportTarget && (
+                  <PrivateKeyWarning
+                    onCancel={() => {
+                      setExportError(null);
+                      setExportTarget(null);
+                    }}
+                    onContinue={async () => {
+                      setExportError(null);
+                      try {
+                        await props.auth.exportWallet?.(exportTarget);
+                        setExportTarget(null);
+                      } catch (error) {
+                        setExportError(
+                          error instanceof Error ? error.message : 'Wallet export failed.',
+                        );
+                      }
+                    }}
+                    error={exportError}
+                  />
+                )}
+              </div>
+            </section>
+          </ResizablePanel>
+
+          <ResizableHandle
+            id="dashboard-divider"
+            aria-label="Resize account and agent panels"
+            className={desktopWorkspace ? '' : 'hidden'}
+            disabled={!desktopWorkspace}
+            withHandle
           />
 
-          {props.consentOpen && (
-            <ConsentPanel
-              config={config}
-              account={account}
-              recipientInput={props.recipientInput}
-              setRecipientInput={props.setRecipientInput}
-              onCancel={() => props.setConsentOpen(false)}
-              onConfirm={props.onProvisionAgent}
-              disabled={props.busy !== null}
-            />
-          )}
-
-          {props.transferReview && (
-            <TransferReviewPanel
-              review={props.transferReview}
-              onCancel={() => props.setTransferReview(null)}
-              onConfirm={props.onConfirmTransfer}
-              disabled={props.busy !== null}
-            />
-          )}
-
-          {balanceAction && account?.accountAddress && (
-            <AmountEntryPanel
-              action={balanceAction}
-              availableUnits={account.balances.accountUsdcUnits}
-              onCancel={() => setBalanceAction(null)}
-              onConfirm={(amountUnits) => {
-                setBalanceAction(null);
-                if (balanceAction === 'deposit') props.onReviewAccountFunding(amountUnits);
-                else props.onReviewWithdraw(amountUnits);
+          <ResizablePanel
+            id="agent-panel"
+            defaultSize={desktopWorkspace ? '30%' : undefined}
+            minSize={desktopWorkspace ? '30%' : undefined}
+            maxSize={desktopWorkspace ? '70%' : undefined}
+            className="min-w-0 xl:h-full xl:pl-2"
+          >
+            <AgentChat
+              ownerAddress={account?.ownerAddress}
+              draft={chatDraft}
+              onDraftChange={setChatDraft}
+              onMandatePrompt={(prompt) => props.onPreview(prompt)}
+              onAskRecord={(question) => props.onAsk(question)}
+              onOpenActions={() => setDrawerOpen(true)}
+              onAaveReview={(result) => {
+                const review = extractPreparedAaveReview(result);
+                if (review) setAaveReview(review);
               }}
-            />
-          )}
-
-          {props.mandateReview && (
-            <MandateReviewPanel
-              draft={props.mandateReview}
-              onChange={props.setMandateReview}
-              onCancel={() => props.setMandateReview(null)}
-              onConfirm={props.onSignMandate}
-              disabled={props.busy !== null}
-            />
-          )}
-
-          <TransactionStatus tx={props.tx} config={config} />
-
-          {exportWarningOpen && account?.ownerAddress && (
-            <PrivateKeyWarning
-              onCancel={() => setExportWarningOpen(false)}
-              onContinue={async () => {
-                setExportError(null);
-                try {
-                  await props.auth.exportWallet?.(account.ownerAddress);
-                  setExportWarningOpen(false);
-                } catch (error) {
-                  setExportError(error instanceof Error ? error.message : 'Wallet export failed.');
+              onGolToolReview={(tool, arguments_) => {
+                setTab(tool === 'check_indexing' ? 'activity' : 'accounts');
+                if (tool === 'create_account') props.onCreateAccount();
+                if (tool === 'provision_agent') props.setConsentOpen(true);
+                if (tool === 'fund_agent_gas') props.onReviewAgentGas();
+                if (tool === 'fund_account') setBalanceAction('deposit');
+                if (tool === 'withdraw') setBalanceAction('withdraw');
+                if (tool === 'sign_mandate') props.onReviewMandate();
+                if (tool === 'revoke_mandate') props.onRevoke();
+                if (tool === 'check_indexing') props.onCheckIndexing();
+                if (tool === 'export_owner_wallet' && canExportOwner) {
+                  setExportError(null);
+                  setExportTarget(account!.ownerAddress);
+                }
+                if (tool === 'submit_instruction') {
+                  const requested = arguments_.instruction;
+                  props.onPreview(typeof requested === 'string' ? requested : chatDraft);
                 }
               }}
-              error={exportError}
+              mandateReady={canRun(props)}
+              preview={props.preview}
+              onConfirmPreview={props.onSubmitInstruction}
+              onCancelPreview={props.onCancelPreview}
+              payment={props.payment}
+              answer={props.answer}
+              busy={props.asking || props.busy !== null}
             />
-          )}
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      </div>
+      <ActionDrawer
+        open={drawerOpen}
+        recipientLabel={config.recipientLabel}
+        recipientAddress={account?.recipients[0]?.address}
+        onClose={() => setDrawerOpen(false)}
+        onListTokens={props.onListMoneyTokens}
+        onQuote={props.onQuoteMoneySwap}
+        onSwap={props.onExecuteMoneySwap}
+        onSend={props.onExecuteMoneySend}
+        onReceive={props.onGetMoneyReceiveInfo}
+      />
+    </main>
+  );
+}
 
-          <Identities config={config} account={account} />
-          <Balances config={config} account={account} />
+function SetupGate(
+  props: DashboardProps & {
+    theme: ThemeMode;
+    onThemeChange: (theme: ThemeMode) => void;
+    nextStep: SetupStep;
+    onOpenActions: () => void;
+    onExport: (address: string) => void;
+    exportTarget: string | null;
+    exportError: string | null;
+    onCloseExport: () => void;
+    onContinueExport: () => Promise<void>;
+  },
+) {
+  const loading = props.account === null && props.accountError === null;
+  const visibleStage = setupStage(props.nextStep.id);
+  const [setupFundingOpen, setSetupFundingOpen] = useState(false);
 
-          {mandate && (
-            <div className="metrics">
+  const runNextStep = () => {
+    const action = props.nextStep.action;
+    if (action === 'create_account') props.onCreateAccount();
+    if (action === 'provision_agent') props.setConsentOpen(true);
+    if (action === 'fund_agent_gas') props.onReviewAgentGas();
+    if (action === 'fund_account') setSetupFundingOpen(true);
+    if (action === 'sign_mandate') props.onReviewMandate();
+  };
+
+  return (
+    <main
+      className={`theme-${props.theme} min-h-screen max-w-none bg-background text-foreground transition-colors`}
+    >
+      <header className="flex h-[68px] items-center justify-between border-b border-border px-4 sm:px-7">
+        <a className="flex items-center gap-2.5 text-sm font-bold tracking-[.16em]" href="#setup">
+          <img className="size-8" src="/gol-mark-blue.svg" alt="" />
+          <span className="font-mono text-sm tracking-[.22em]">GOL</span>
+        </a>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-full"
+            aria-label="Actions"
+            onClick={props.onOpenActions}
+          >
+            <CirclePlus className="size-4" />
+            <span className="hidden sm:inline">Actions</span>
+          </Button>
+          <ThemeIconButton theme={props.theme} onChange={props.onThemeChange} />
+          <WalletAccountPill
+            config={props.config}
+            account={props.account}
+            auth={props.auth}
+            onExport={props.onExport}
+          />
+        </div>
+      </header>
+
+      <section
+        id="setup"
+        className="grid min-h-[calc(100vh-68px)] place-items-center px-4 py-8 sm:px-6"
+      >
+        <Card className="w-full max-w-xl shadow-panel">
+          <CardContent className="p-6 sm:p-8">
+            <div className="flex items-start justify-between gap-5">
               <div>
-                <span>Per payment</span>
-                <strong>{formatUsdc(BigInt(mandate.perPaymentCapUnits))} USDC</strong>
+                <span className="font-mono text-[10px] uppercase tracking-[.18em] text-primary">
+                  Account setup
+                </span>
+                <h1 className="mt-2 text-2xl font-semibold tracking-tight">
+                  Set up agent payments
+                </h1>
               </div>
-              <div>
-                <span>Cumulative</span>
-                <strong>{formatUsdc(BigInt(mandate.cumulativeCapUnits))} USDC</strong>
-              </div>
-              <div>
-                <span>Expires</span>
-                <strong>{new Date(Number(mandate.expiresAt) * 1000).toLocaleDateString()}</strong>
-              </div>
+              <Badge variant="secondary" className="shrink-0 font-mono text-[10px]">
+                Step {visibleStage} of 3
+              </Badge>
             </div>
-          )}
 
-          <div className="owner-actions">
-            <button
-              className="secondary"
-              onClick={props.onRevoke}
-              disabled={!mandate || mandate.revoked || props.busy !== null}
+            <ol
+              className="mt-6 grid grid-cols-3 gap-1.5"
+              aria-label={`Setup step ${visibleStage} of 3`}
             >
-              Revoke mandate
-            </button>
-          </div>
-          <p className="hint">
-            {props.accountError
-              ? `Account state unavailable: ${props.accountError}`
-              : 'Owner actions always require the owner wallet. The backend never holds its key.'}
-          </p>
-        </article>
-
-        <article className="panel agent-panel">
-          <div className="panel-heading">
-            <div>
-              <p className="kicker">AGENT RUNNER</p>
-              <h2>Make a payment</h2>
-            </div>
-            <span className="agent-dot">Restricted signer</span>
-          </div>
-          <form onSubmit={props.onPreview}>
-            <label htmlFor="instruction">Instruction</label>
-            <textarea
-              id="instruction"
-              value={props.instruction}
-              onChange={(event) => props.setInstruction(event.target.value)}
-              maxLength={2000}
-            />
-            <div className="examples">
-              <button
-                type="button"
-                onClick={() => props.setInstruction(`Pay 40 USDC to ${config.recipientLabel}`)}
-              >
-                40 USDC
-              </button>
-              <button
-                type="button"
-                onClick={() => props.setInstruction(`Pay 70 USDC to ${config.recipientLabel}`)}
-              >
-                70 USDC
-              </button>
-            </div>
-            <button
-              className="primary"
-              type="submit"
-              disabled={!canRun(props) || props.preview !== null}
-            >
-              Run agent <span>→</span>
-            </button>
-          </form>
-
-          {props.preview && (
-            <div className="resolved" data-testid="instruction-preview">
-              <span>RESOLVED BEFORE SUBMISSION</span>
-              <strong>{props.preview.amountUsdc} USDC</strong>
-              <strong>{props.preview.recipientLabel}</strong>
-              <code>{props.preview.recipient}</code>
-              <code>Mandate #{props.preview.mandateId}</code>
-              <code>Request {shorten(props.preview.requestId)}</code>
-              <div className="resolved-actions">
-                <button className="secondary" onClick={props.onCancelPreview}>
-                  Cancel
-                </button>
-                <button className="primary" onClick={props.onSubmitInstruction}>
-                  Submit request <span>→</span>
-                </button>
-              </div>
-            </div>
-          )}
-
-          <PaymentStatus payment={props.payment} config={config} />
-        </article>
-      </section>
-
-      <section className="grid evidence-grid">
-        <article className="panel timeline-panel">
-          <div className="panel-heading timeline-heading">
-            <div>
-              <p className="kicker">THE GRAPH</p>
-              <h2>Indexed activity</h2>
-            </div>
-            <div className="filters">
-              {(['ALL', 'EXECUTED', 'REFUSED'] as const).map((value) => (
-                <button
-                  key={value}
-                  className={filter === value ? 'selected' : ''}
-                  onClick={() => setFilter(value)}
-                >
-                  {value}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="freshness" role="status">
-            <i />
-            <span className="freshness-badge">
-              {freshnessLabel(props.page, props.lastGoodPage)}
-            </span>
-            <span>
-              {source?.indexedBlock
-                ? `Indexed through block ${source.indexedBlock}`
-                : 'No indexed block'}
-              {source?.indexedAt
-                ? ` · ${new Date(Number(source.indexedAt) * 1000).toUTCString()}`
-                : ''}
-              {source?.sourceDeployment ? ` · ${source.sourceDeployment}` : ''}
-            </span>
-          </div>
-
-          {props.pending.length > 0 && (
-            <div className="indexing-note">
-              <span>
-                {props.pending.length} confirmed on-chain result
-                {props.pending.length === 1 ? '' : 's'} awaiting indexing.
-              </span>
-              {props.indexingWindowClosed && (
-                <button
-                  className="text-button"
-                  onClick={props.onCheckIndexing}
-                  disabled={props.checkingIndexing}
-                >
-                  {props.checkingIndexing ? 'Checking…' : 'Check indexing again'}
-                </button>
-              )}
-            </div>
-          )}
-
-          {visible.length === 0 ? (
-            <div className="empty">
-              <strong>No activity loaded</strong>
-              <span>Run an instruction after setup.</span>
-            </div>
-          ) : (
-            <ol className="timeline">
-              {visible.map((entry) =>
-                entry.kind === 'indexed' ? (
-                  <li key={entry.key}>
-                    <span className={`event-icon ${entry.record.outcome.toLowerCase()}`}>
-                      {entry.record.outcome === 'EXECUTED' ? '✓' : '!'}
-                    </span>
-                    <div className="event-main">
-                      <div>
-                        <strong>{formatUsdc(BigInt(entry.record.attempted))} USDC</strong>
-                        <span className={`status ${entry.record.outcome.toLowerCase()}`}>
-                          {entry.record.outcome}
-                        </span>
-                      </div>
-                      <p>
-                        {entry.record.outcome === 'REFUSED'
-                          ? `Successful on-chain refusal · ${entry.record.rule}`
-                          : `Paid ${shorten(entry.record.recipient)}`}
-                      </p>
-                      <small>
-                        Request {shorten(entry.record.requestId)} · Mandate #
-                        {entry.record.mandateId} ·{' '}
-                        <a
-                          href={explorerTxUrl(config, entry.record.transactionHash)}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          transaction ↗
-                        </a>
-                      </small>
-                    </div>
-                    <div className="headroom">
-                      <span>HEADROOM</span>
-                      <strong>{formatUsdc(BigInt(entry.record.headroom))}</strong>
-                      <small>USDC</small>
-                    </div>
-                  </li>
-                ) : (
-                  <li key={entry.key} className="pending-row">
-                    <span className="event-icon indexing">◷</span>
-                    <div className="event-main">
-                      <div>
-                        <strong>{formatUsdc(BigInt(entry.pending.attempted))} USDC</strong>
-                        <span className="status indexing">INDEXING</span>
-                        <span className={`status ${entry.pending.outcome.toLowerCase()}`}>
-                          {entry.pending.outcome}
-                        </span>
-                      </div>
-                      <p>
-                        On-chain; indexing pending.{' '}
-                        {entry.pending.outcome === 'REFUSED'
-                          ? `Successful on-chain refusal · ${entry.pending.rule}`
-                          : 'Payment released by the account contract.'}
-                      </p>
-                      <small>
-                        Request {shorten(entry.pending.requestId)} · Mandate #
-                        {entry.pending.mandateId} ·{' '}
-                        <a
-                          href={explorerTxUrl(config, entry.pending.txHash)}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          transaction ↗
-                        </a>
-                      </small>
-                    </div>
-                    <div className="headroom">
-                      <span>HEADROOM</span>
-                      <strong>{formatUsdc(BigInt(entry.pending.headroom))}</strong>
-                      <small>USDC</small>
-                    </div>
-                  </li>
-                ),
+              {(['Your wallet', 'Payment setup', 'Funds and rules'] as const).map(
+                (label, index) => {
+                  const stage = index + 1;
+                  return (
+                    <li key={label} className="min-w-0">
+                      <span
+                        className={`block h-1.5 rounded-full ${
+                          stage < visibleStage
+                            ? 'bg-success'
+                            : stage === visibleStage
+                              ? 'bg-primary'
+                              : 'bg-muted'
+                        }`}
+                      />
+                      <span
+                        className={`mt-2 block truncate text-[10px] ${
+                          stage === visibleStage ? 'text-foreground' : 'text-muted-foreground'
+                        }`}
+                      >
+                        {label}
+                      </span>
+                    </li>
+                  );
+                },
               )}
             </ol>
-          )}
-        </article>
 
-        <AnswerPanel
-          question={props.question}
-          setQuestion={props.setQuestion}
-          onAsk={props.onAsk}
-          answer={props.answer}
-          asking={props.asking}
-          disabled={!account?.accountAddress}
-        />
+            <div className="mt-7 rounded-card border border-border bg-muted p-5">
+              <span className="font-mono text-[9px] uppercase tracking-[.16em] text-muted-foreground">
+                {loading ? 'Checking account' : 'Next step'}
+              </span>
+              <h2 className="mt-2 text-lg font-semibold">
+                {loading ? 'Loading your wallet state...' : props.nextStep.title}
+              </h2>
+              <p className="mt-2 text-sm leading-copy text-muted-foreground">
+                {loading
+                  ? 'Checking your wallet and payment setup on Arc testnet.'
+                  : props.nextStep.detail}
+              </p>
+
+              {!loading &&
+              props.nextStep.status === 'blocked' &&
+              (props.nextStep.id === 'agent_gas'
+                ? props.account?.agentAddress
+                : props.account?.ownerAddress) ? (
+                <div className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-3 py-2">
+                  <div className="min-w-0">
+                    <span className="block text-[10px] uppercase tracking-wider text-muted-foreground">
+                      {props.nextStep.id === 'agent_gas' ? 'Agent address' : 'Your wallet address'}
+                    </span>
+                    <code className="block truncate text-xs">
+                      {props.nextStep.id === 'agent_gas'
+                        ? props.account?.agentAddress
+                        : props.account?.ownerAddress}
+                    </code>
+                  </div>
+                  <CopyAddress
+                    value={
+                      (props.nextStep.id === 'agent_gas'
+                        ? props.account?.agentAddress
+                        : props.account?.ownerAddress)!
+                    }
+                  />
+                </div>
+              ) : null}
+
+              {!loading && props.nextStep.status === 'blocked' && props.config.faucetUrl ? (
+                <div className="mt-5 grid grid-cols-2 gap-2">
+                  <Button asChild>
+                    <a href={props.config.faucetUrl} target="_blank" rel="noreferrer">
+                      Open Circle faucet <ArrowUpRight size={15} />
+                    </a>
+                  </Button>
+                  <Button variant="outline" onClick={props.onRefreshAccount}>
+                    Check balance again
+                  </Button>
+                </div>
+              ) : null}
+
+              {!loading && props.nextStep.action && props.nextStep.actionLabel ? (
+                <Button
+                  className="mt-5 w-full"
+                  onClick={runNextStep}
+                  disabled={props.busy !== null}
+                >
+                  {props.busy === props.nextStep.action
+                    ? 'Waiting for confirmation...'
+                    : props.nextStep.actionLabel}
+                  <ArrowUpRight size={15} />
+                </Button>
+              ) : null}
+            </div>
+
+            {props.accountError ? (
+              <Alert variant="destructive" className="mt-4">
+                <CircleAlert className="size-4" aria-hidden />
+                <div>
+                  <AlertTitle>Could not load your account</AlertTitle>
+                  <AlertDescription>{props.accountError}</AlertDescription>
+                </div>
+              </Alert>
+            ) : null}
+
+            {props.account?.ownerAddress ? (
+              <p className="mt-5 text-center font-mono text-[10px] text-muted-foreground">
+                Your wallet {shorten(props.account.ownerAddress)}
+              </p>
+            ) : null}
+
+            <TransactionStatus tx={props.tx} config={props.config} />
+          </CardContent>
+        </Card>
       </section>
 
-      <footer>
-        <span>GOL · ARC TESTNET ONLY</span>
-        <span>USDC payments · Contract-enforced policy · Indexed evidence</span>
-      </footer>
+      {props.consentOpen ? (
+        <ConsentPanel
+          config={props.config}
+          account={props.account}
+          recipientInput={props.recipientInput}
+          setRecipientInput={props.setRecipientInput}
+          onCancel={() => props.setConsentOpen(false)}
+          onConfirm={props.onProvisionAgent}
+          disabled={props.busy !== null}
+        />
+      ) : null}
+      {props.transferReview ? (
+        <TransferReviewPanel
+          review={props.transferReview}
+          onCancel={() => props.setTransferReview(null)}
+          onConfirm={props.onConfirmTransfer}
+          disabled={props.busy !== null}
+        />
+      ) : null}
+      {setupFundingOpen ? (
+        <AmountEntryPanel
+          action="deposit"
+          availableUnits={props.account?.balances.ownerUsdcUnits ?? '0'}
+          onCancel={() => setSetupFundingOpen(false)}
+          onConfirm={(amountUnits) => {
+            setSetupFundingOpen(false);
+            props.onReviewAccountFunding(amountUnits);
+          }}
+        />
+      ) : null}
+      {props.mandateReview ? (
+        <MandateReviewPanel
+          draft={props.mandateReview}
+          onChange={props.setMandateReview}
+          onCancel={() => props.setMandateReview(null)}
+          onConfirm={props.onSignMandate}
+          disabled={props.busy !== null}
+        />
+      ) : null}
+      {props.exportTarget ? (
+        <PrivateKeyWarning
+          onCancel={props.onCloseExport}
+          onContinue={props.onContinueExport}
+          error={props.exportError}
+        />
+      ) : null}
     </main>
+  );
+}
+
+function setupStage(id: SetupStep['id']): 1 | 2 | 3 {
+  if (id === 'authenticated' || id === 'owner_gas') return 1;
+  if (id === 'account' || id === 'agent_wallet' || id === 'agent_gas') return 2;
+  return 3;
+}
+
+function AccountProfileHeader({
+  config,
+  account,
+  mandateActive,
+  remainingUnits,
+  onActions,
+  onDeposit,
+  onPay,
+}: {
+  config: PublicConfig;
+  account: AccountSnapshot | null;
+  mandateActive: boolean;
+  remainingUnits: bigint;
+  onActions: () => void;
+  onDeposit: () => void;
+  onPay: () => void;
+}) {
+  const ownerAddress = account?.ownerAddress ?? null;
+  const accountBalanceUnits = BigInt(account?.balances.accountUsdcUnits ?? '0');
+  const availableUnits =
+    accountBalanceUnits < remainingUnits ? accountBalanceUnits : remainingUnits;
+  const accountBalance = formatUsdc(accountBalanceUnits);
+  const avatarSeed = encodeURIComponent((ownerAddress ?? 'gol-owner').toLowerCase());
+
+  return (
+    <div className="flex flex-col gap-6 @min-[720px]:flex-row @min-[720px]:items-center @min-[720px]:justify-between">
+      <div className="flex min-w-0 items-center gap-4">
+        <span className="relative shrink-0">
+          <Avatar className="size-16 border border-border">
+            <AvatarImage
+              src={`https://api.dicebear.com/10.x/critters/svg?seed=${avatarSeed}`}
+              alt=""
+            />
+            <AvatarFallback>
+              <Wallet className="size-6" aria-hidden="true" />
+            </AvatarFallback>
+          </Avatar>
+          <Badge
+            className="absolute -bottom-0.5 -right-0.5 grid size-6 place-items-center rounded-full border-2 border-background bg-primary p-1.5"
+            title={config.chainName}
+          >
+            <img src="/arc-mark.png" alt="" className="size-full object-contain" />
+            <span className="sr-only">{config.chainName}</span>
+          </Badge>
+        </span>
+
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-mono text-xs text-muted-foreground">
+              {ownerAddress ? shorten(ownerAddress) : 'Personal wallet'}
+            </span>
+            <Badge variant={mandateActive ? 'default' : 'warning'}>
+              {mandateActive ? 'Agent ready' : 'Setup required'}
+            </Badge>
+          </div>
+          <span className="mt-3 block text-xs text-muted-foreground">Ready to pay</span>
+          <div className="mt-1 flex flex-wrap items-end gap-2">
+            <strong className="text-4xl font-semibold leading-none tracking-tight @min-[520px]:text-5xl">
+              {formatUsdc(availableUnits)} USDC
+            </strong>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
+            <span>{accountBalance} USDC in payment funds</span>
+            <span>{formatUsdc(remainingUnits)} USDC allowed by your rules</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Button className="rounded-full" onClick={onActions}>
+          <CirclePlus className="size-4" aria-hidden="true" />
+          Actions
+        </Button>
+        <Button
+          variant="outline"
+          className="rounded-full"
+          onClick={onDeposit}
+          disabled={!account?.accountAddress}
+        >
+          Add funds
+        </Button>
+        <Button variant="outline" className="rounded-full" onClick={onPay}>
+          Send payment
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function RuleCard({ label, value }: { label: string; value: string }) {
+  return (
+    <Card className="bg-muted shadow-none">
+      <CardContent className="p-4">
+        <span className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</span>
+        <strong className="mt-5 block text-sm">{value}</strong>
+      </CardContent>
+    </Card>
+  );
+}
+
+function WorkspaceActivity(props: {
+  config: PublicConfig;
+  source: ActivityPage | null;
+  visible: ReturnType<typeof mergeTimeline>;
+  filter: TimelineFilter;
+  setFilter: (filter: TimelineFilter) => void;
+  pendingCount: number;
+  indexingWindowClosed: boolean;
+  checkingIndexing: boolean;
+  onCheckIndexing: () => void;
+}) {
+  return (
+    <div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <span className="font-mono text-[9px] uppercase tracking-[.16em] text-primary">
+            The Graph
+          </span>
+          <h3 className="mt-1 text-lg font-semibold">Indexed activity</h3>
+        </div>
+        <div className="flex rounded-full bg-muted p-1">
+          {(['ALL', 'EXECUTED', 'REFUSED'] as const).map((value) => (
+            <Button
+              key={value}
+              size="sm"
+              variant="ghost"
+              className={`rounded-full text-[10px] ${props.filter === value ? 'bg-card text-primary shadow-sm' : ''}`}
+              onClick={() => props.setFilter(value)}
+            >
+              {value}
+            </Button>
+          ))}
+        </div>
+      </div>
+      <div className="mt-5 flex items-center justify-between border-y border-border py-3 text-[10px] text-muted-foreground">
+        <span className="flex items-center gap-2">
+          <ShieldCheck className="size-4 text-primary" /> {freshnessLabel(props.source, null)}
+        </span>
+        <span>
+          {props.source?.indexedBlock
+            ? 'Indexed through block ' + props.source.indexedBlock
+            : 'No indexed block'}
+        </span>
+      </div>
+      {props.pendingCount > 0 && (
+        <div className="mt-3 flex items-center justify-between rounded-xl bg-accent px-4 py-3 text-xs text-accent-foreground">
+          <span>{props.pendingCount} on-chain result awaiting indexing.</span>
+          {props.indexingWindowClosed && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={props.onCheckIndexing}
+              disabled={props.checkingIndexing}
+            >
+              {props.checkingIndexing ? 'Checking...' : 'Check again'}
+            </Button>
+          )}
+        </div>
+      )}
+      {props.visible.length === 0 ? (
+        <div className="grid min-h-[300px] place-items-center text-center">
+          <div>
+            <div className="mx-auto grid size-12 place-items-center rounded-xl bg-muted text-muted-foreground">
+              <WalletCards size={20} />
+            </div>
+            <strong className="mt-4 block text-sm">No activity loaded</strong>
+            <span className="mt-1 block text-xs text-muted-foreground">
+              Run an instruction after setup.
+            </span>
+          </div>
+        </div>
+      ) : (
+        <ol className="mt-3 divide-y divide-border" data-testid="activity-timeline">
+          {props.visible.map((entry) => {
+            const record = entry.kind === 'indexed' ? entry.record : entry.pending;
+            const txHash =
+              entry.kind === 'indexed' ? entry.record.transactionHash : entry.pending.txHash;
+            const refused = record.outcome === 'REFUSED';
+            return (
+              <li
+                key={entry.key}
+                data-pending={entry.kind === 'pending' ? 'true' : 'false'}
+                className={`grid grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-4 py-5 ${entry.kind === 'pending' ? 'opacity-70' : ''}`}
+              >
+                <span
+                  className={`grid size-10 place-items-center rounded-lg text-sm font-semibold ${refused ? 'bg-destructive text-destructive-foreground' : 'bg-primary text-primary-foreground'}`}
+                >
+                  {refused ? '!' : '✓'}
+                </span>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <strong className="text-sm">{formatUsdc(BigInt(record.attempted))} USDC</strong>
+                    <span
+                      className={`rounded-full border px-2 py-1 text-[9px] font-medium ${refused ? 'border-destructive/30 text-destructive' : 'border-primary/30 text-primary'}`}
+                    >
+                      {record.outcome}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {entry.kind === 'pending'
+                      ? `On-chain; indexing pending. ${refused ? `Successful on-chain refusal: ${record.rule}` : 'Payment released by the account contract.'}`
+                      : refused
+                        ? `Successful on-chain refusal: ${record.rule}`
+                        : `Paid ${shorten(record.recipient)}`}
+                  </p>
+                  <small className="mt-2 block font-mono text-[9px] text-muted-foreground">
+                    Request {shorten(record.requestId)}.{' '}
+                    <a
+                      className="text-primary hover:underline"
+                      href={explorerTxUrl(props.config, txHash)}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      transaction ↗
+                    </a>
+                  </small>
+                </div>
+                <div className="text-right">
+                  <span className="block font-mono text-[9px] uppercase tracking-[.14em] text-muted-foreground">
+                    Headroom
+                  </span>
+                  <strong className="mt-1 block text-lg">
+                    {formatUsdc(BigInt(record.headroom))}
+                  </strong>
+                  <small className="text-[9px] text-muted-foreground">USDC</small>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </div>
   );
 }
 
@@ -523,32 +1082,205 @@ function canRun(props: DashboardProps): boolean {
   return PAYMENT_STAGES[stage].terminal;
 }
 
-function SignInGate({ config, auth }: Pick<DashboardProps, 'config' | 'auth'>) {
+function SignInGate({
+  config,
+  auth,
+  theme,
+  onThemeChange,
+}: Pick<DashboardProps, 'config' | 'auth'> & {
+  theme: ThemeMode;
+  onThemeChange: (theme: ThemeMode) => void;
+}) {
+  const [email, setEmail] = useState('');
+  const authConfigured = auth.mode === 'live';
+
+  function continueWithEmail(event: FormEvent) {
+    event.preventDefault();
+    const value = email.trim();
+    if (!value || !auth.ready || !authConfigured) return;
+    auth.login('email', value);
+  }
+
   return (
-    <main className="auth-gate">
-      <section className="auth-card">
-        <a className="brand auth-brand" href="#signin">
-          <span className="brand-mark">G</span>
-          <span>GOL</span>
-        </a>
-        <p className="eyebrow">CONTROLLED AGENT PAYMENTS</p>
-        <h1>Keep the authority.</h1>
-        <p className="lede">
-          Sign in to view your wallet, GOL account, mandates, and indexed payment activity.
-        </p>
-        <span className="network auth-network">
-          <i /> {config.chainName}
-        </span>
-        <button
-          id="signin"
-          className="primary auth-button"
-          onClick={() => auth.login()}
-          disabled={!auth.ready}
-        >
-          {auth.ready ? auth.label : 'Initializing Privy…'} <span>→</span>
-        </button>
+    <main
+      className={`theme-${theme} relative grid min-h-screen max-w-none place-items-center overflow-y-auto bg-background px-5 py-20 text-foreground transition-colors sm:px-8`}
+    >
+      <DitherBackground theme={theme} />
+
+      <div className="absolute right-5 top-5 z-10 sm:right-8 sm:top-8">
+        <ThemeSwitch theme={theme} onChange={onThemeChange} compact />
+      </div>
+
+      <section className="relative z-10 w-full max-w-lg">
+        <Card id="signin" className="w-full bg-card/95 shadow-panel backdrop-blur-sm">
+          <CardContent className="px-6 py-8 sm:px-12 sm:py-12">
+            <div className="flex flex-col items-center text-center">
+              <img className="size-16" src="/gol-mark-blue.svg" alt="GOL" />
+              <h1 className="mt-5 text-3xl font-semibold tracking-tight">GOL Network</h1>
+              <p className="mt-2 text-sm leading-copy text-muted-foreground">
+                Sign in to your owner-controlled account
+              </p>
+            </div>
+
+            <form className="mt-9 space-y-4" onSubmit={continueWithEmail}>
+              <div className="grid gap-2">
+                <Label htmlFor="signin-email">Email</Label>
+                <div className="relative">
+                  <Mail className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    id="signin-email"
+                    type="email"
+                    inputMode="email"
+                    autoComplete="email"
+                    placeholder="you@example.com"
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    disabled={!authConfigured}
+                    className="h-14 rounded-full pl-11"
+                  />
+                </div>
+              </div>
+              <Button
+                type="submit"
+                size="lg"
+                className="h-14 w-full rounded-full"
+                disabled={!authConfigured || !auth.ready || !email.trim()}
+              >
+                <Mail size={17} />
+                {auth.ready ? 'Continue with email' : 'Initializing Privy...'}
+              </Button>
+            </form>
+
+            <div className="my-6 flex items-center gap-3">
+              <Separator className="flex-1" />
+              <span className="text-xs text-muted-foreground">or</span>
+              <Separator className="flex-1" />
+            </div>
+
+            <div className="space-y-3">
+              <Button
+                type="button"
+                size="lg"
+                variant="outline"
+                className="h-13 w-full rounded-full"
+                onClick={() => auth.login('google')}
+                disabled={!authConfigured || !auth.ready}
+              >
+                <SiGoogle aria-hidden className="size-4" />
+                Continue with Google
+              </Button>
+              <div className="grid grid-cols-2 gap-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-12 rounded-full"
+                  onClick={() => auth.login('passkey')}
+                  disabled={!authConfigured || !auth.ready}
+                >
+                  <KeyRound size={16} /> Passkey
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-12 rounded-full"
+                  onClick={() => auth.login('wallet')}
+                  disabled={!authConfigured || !auth.ready}
+                >
+                  <Wallet size={16} /> Wallet
+                </Button>
+              </div>
+            </div>
+
+            {auth.error ? (
+              <Alert variant="destructive" className="mt-5">
+                <CircleAlert className="size-4" aria-hidden />
+                <div>
+                  <AlertTitle>Sign in failed</AlertTitle>
+                  <AlertDescription>{auth.error}</AlertDescription>
+                </div>
+              </Alert>
+            ) : null}
+
+            {!authConfigured ? (
+              <div className="mt-5 space-y-3">
+                <Alert>
+                  <CircleAlert className="size-4" aria-hidden />
+                  <div>
+                    <AlertTitle>Authentication is not configured</AlertTitle>
+                    <AlertDescription>
+                      Add the Privy environment variables and restart the app to use Google,
+                      passkey, email, or wallet sign-in.
+                    </AlertDescription>
+                  </div>
+                </Alert>
+                <Button
+                  type="button"
+                  size="lg"
+                  className="h-14 w-full rounded-full"
+                  onClick={auth.startFixture}
+                >
+                  Open fixture demo
+                </Button>
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
       </section>
     </main>
+  );
+}
+
+function ThemeSwitch({
+  theme,
+  onChange,
+  compact = false,
+}: {
+  theme: ThemeMode;
+  onChange: (theme: ThemeMode) => void;
+  compact?: boolean;
+}) {
+  return (
+    <div
+      className="flex items-center gap-1 rounded-full border border-border bg-card p-1"
+      role="group"
+      aria-label="Theme"
+    >
+      {(['dark', 'light'] as const).map((option) => (
+        <Button
+          key={option}
+          type="button"
+          variant="ghost"
+          size="sm"
+          className={`rounded-full px-3 text-xs font-normal ${compact ? 'min-w-12' : 'min-w-14'} ${theme === option ? 'bg-secondary text-foreground shadow-sm hover:bg-secondary' : 'text-muted-foreground'}`}
+          aria-pressed={theme === option}
+          onClick={() => onChange(option)}
+        >
+          {option.charAt(0).toUpperCase() + option.slice(1)}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
+function ThemeIconButton({
+  theme,
+  onChange,
+}: {
+  theme: ThemeMode;
+  onChange: (theme: ThemeMode) => void;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="icon"
+      className="size-10 rounded-full bg-card shadow-none"
+      aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+      title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+      onClick={() => onChange(theme === 'dark' ? 'light' : 'dark')}
+    >
+      {theme === 'dark' ? <Moon className="size-4" /> : <Sun className="size-4" />}
+    </Button>
   );
 }
 
@@ -557,7 +1289,7 @@ function AccountAndMandateControls(props: {
   busy: OwnerActionKind | null;
   config: PublicConfig;
   account: AccountSnapshot | null;
-  onExport: () => void;
+  onExport?: () => void;
   onAction: (action: OwnerActionKind) => void;
 }) {
   const step = (id: SetupStep['id']) => props.steps.find((entry) => entry.id === id)!;
@@ -581,194 +1313,258 @@ function AccountAndMandateControls(props: {
     accountStep.status === 'complete' &&
     agentStep.status === 'complete' &&
     (!agentGas || agentGas.status === 'complete');
+  const accountBalance = BigInt(props.account?.balances.accountUsdcUnits ?? '0');
+  const ruleRemaining = mandate
+    ? BigInt(mandate.cumulativeCapUnits) - BigInt(mandate.spentUnits)
+    : 0n;
+  const recipient = props.account?.recipients[0] ?? null;
 
   return (
-    <div className="account-controls">
-      <div className="account-card">
-        <div className="account-card-heading">
-          <div>
-            <span>Privy owner wallet</span>
-            <strong>
+    <div className="grid gap-3">
+      <div className="grid gap-3 @min-[620px]:grid-cols-2">
+        <Card className="bg-muted shadow-none">
+          <CardContent className="flex h-full flex-col p-5">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm font-medium">Your wallet</span>
+              <Badge variant={ownerGas.status === 'complete' ? 'default' : 'warning'}>
+                {ownerGas.status === 'complete' ? 'Ready' : 'Needs gas'}
+              </Badge>
+            </div>
+            <strong className="mt-3 block text-xl">
               {formatUsdc(BigInt(props.account?.balances.ownerUsdcUnits ?? '0'))} USDC
             </strong>
-          </div>
-          <span className={`status ${ownerGas.status === 'complete' ? 'active' : 'refused'}`}>
-            {ownerGas.status === 'complete' ? 'Gas ready' : 'Gas required'}
-          </span>
-        </div>
-        {props.account?.ownerAddress && (
-          <>
-            <AddressChip config={props.config} value={props.account.ownerAddress} />
-            <div className="wallet-secondary-row">
-              <span>
-                Arc gas: {formatNativeGas(BigInt(props.account.balances.ownerGasWei))} USDC
-              </span>
-              <button className="text-button" onClick={props.onExport} type="button">
-                Export
-              </button>
-            </div>
-          </>
-        )}
-        {ownerGas.status !== 'complete' && (
-          <p className="control-note">
-            Account and mandate transactions require sufficient Arc gas.
-            {props.config.faucetUrl && (
-              <>
-                {' '}
+            <p className="mt-1 text-xs text-muted-foreground">Only you can spend this money.</p>
+            {props.account?.ownerAddress ? (
+              <div className="mt-auto flex items-center gap-1 pt-5 font-mono text-[10px] text-muted-foreground">
+                <code title={props.account.ownerAddress}>
+                  {shorten(props.account.ownerAddress)}
+                </code>
+                <CopyAddress value={props.account.ownerAddress} />
+                <Button asChild variant="ghost" size="icon" className="size-6 rounded-full">
+                  <a
+                    href={explorerAddressUrl(props.config, props.account.ownerAddress)}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label="View your wallet on explorer"
+                  >
+                    <ArrowUpRight size={12} />
+                  </a>
+                </Button>
+                {props.onExport ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="ml-auto h-7 rounded-full px-2 text-[10px]"
+                    onClick={props.onExport}
+                  >
+                    Export
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+            {ownerGas.status !== 'complete' && props.config.faucetUrl ? (
+              <Button asChild variant="outline" size="sm" className="mt-4 w-full rounded-full">
                 <a href={props.config.faucetUrl} target="_blank" rel="noreferrer">
-                  Open faucet ↗
+                  Get Arc gas
                 </a>
-              </>
-            )}
-          </p>
-        )}
-      </div>
+              </Button>
+            ) : null}
+          </CardContent>
+        </Card>
 
-      <div className="account-card" data-step="account">
-        <div className="account-card-heading">
-          <div>
-            <span>GOL account</span>
-            <strong>
-              {formatUsdc(BigInt(props.account?.balances.accountUsdcUnits ?? '0'))} USDC
-            </strong>
-          </div>
-          <span className={`status ${props.account?.accountAddress ? 'active' : 'refused'}`}>
-            {props.account?.accountAddress ? 'Created' : 'Not created'}
-          </span>
-        </div>
-        {props.account?.accountAddress ? (
-          <>
-            <AddressChip config={props.config} value={props.account.accountAddress} />
-            <div className="account-balance-actions">
-              <button
-                className="secondary"
-                onClick={() => props.onAction('fund_account')}
-                disabled={props.busy !== null}
-              >
-                Deposit
-              </button>
-              <button
-                className="secondary"
-                onClick={() => props.onAction('withdraw')}
-                disabled={
-                  props.busy !== null || BigInt(props.account.balances.accountUsdcUnits) === 0n
-                }
-              >
-                Withdraw
-              </button>
+        <Card className="bg-muted shadow-none" data-step="account">
+          <CardContent className="flex h-full flex-col p-5">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm font-medium">Payment funds</span>
+              <Badge variant={props.account?.accountAddress ? 'default' : 'warning'}>
+                {props.account?.accountAddress ? 'Ready' : 'Not created'}
+              </Badge>
             </div>
-          </>
-        ) : (
-          <button
-            className="primary control-button"
-            onClick={() => props.onAction('create_account')}
-            disabled={ownerGas.status !== 'complete' || props.busy !== null}
-          >
-            {props.busy === 'create_account' ? 'Waiting for confirmation…' : 'Create GOL account'}
-            <span>→</span>
-          </button>
-        )}
+            <strong className="mt-3 block text-xl">{formatUsdc(accountBalance)} USDC</strong>
+            <p className="mt-1 text-xs text-muted-foreground">
+              GOL can pay only from this balance.
+            </p>
+            {props.account?.accountAddress ? (
+              <div className="mt-auto pt-5">
+                <div className="flex items-center gap-1 font-mono text-[10px] text-muted-foreground">
+                  <code title={props.account.accountAddress}>
+                    {shorten(props.account.accountAddress)}
+                  </code>
+                  <CopyAddress value={props.account.accountAddress} />
+                  <Button asChild variant="ghost" size="icon" className="size-6 rounded-full">
+                    <a
+                      href={explorerAddressUrl(props.config, props.account.accountAddress)}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label="View payment account on explorer"
+                    >
+                      <ArrowUpRight size={12} />
+                    </a>
+                  </Button>
+                </div>
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  <Button
+                    variant="outline"
+                    className="rounded-full"
+                    onClick={() => props.onAction('fund_account')}
+                    disabled={props.busy !== null}
+                  >
+                    Add funds
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="rounded-full"
+                    onClick={() => props.onAction('withdraw')}
+                    disabled={props.busy !== null || accountBalance === 0n}
+                  >
+                    Withdraw
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <Button
+                className="mt-5 w-full rounded-full"
+                onClick={() => props.onAction('create_account')}
+                disabled={ownerGas.status !== 'complete' || props.busy !== null}
+              >
+                {props.busy === 'create_account' ? 'Confirming...' : 'Create payment account'}
+              </Button>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
-      {accountStep.status === 'complete' && agentStep.status !== 'complete' && (
-        <div className="control-callout" data-step="agent_wallet">
-          <div>
-            <strong>Connect a restricted agent</strong>
-            <p>Provision the separate signer and choose its approved recipient.</p>
-          </div>
-          <button
-            className="secondary"
-            onClick={() => props.onAction('provision_agent')}
-            disabled={props.busy !== null}
-          >
-            Review agent policy
-          </button>
-        </div>
-      )}
-
-      {agentGas && agentStep.status === 'complete' && agentGas.status !== 'complete' && (
-        <div className="control-callout" data-step="agent_gas">
-          <div>
-            <strong>Agent gas reserve required</strong>
-            <p>This top-up is separate from the mandate budget.</p>
-          </div>
-          <button
-            className="secondary"
-            onClick={() => props.onAction('fund_agent_gas')}
-            disabled={props.busy !== null}
-          >
-            Top up agent gas
-          </button>
-        </div>
-      )}
-
-      <div className="mandate-card" data-step="mandate">
-        <div className="account-card-heading">
-          <div>
-            <span>Mandate</span>
-            <strong>
-              {mandate && !mandate.revoked
-                ? `#${props.account?.activeMandateId} active`
-                : mandate?.revoked
-                  ? `#${props.account?.activeMandateId} revoked`
-                  : 'No active mandate'}
-            </strong>
-          </div>
-          <span className={`status ${mandate && !mandate.revoked ? 'active' : 'refused'}`}>
-            {mandate && !mandate.revoked ? 'Active' : 'Inactive'}
-          </span>
-        </div>
-        {!mandate || mandate.revoked ? (
-          <>
-            <p className="control-note">
-              Creating a mandate requires a restricted agent and enough owner gas. The account may
-              be funded before or after the mandate is created; the owner wallet pays the creation
-              transaction gas.
-            </p>
-            <button
-              className="primary control-button"
+      <Card className="bg-muted shadow-none" data-step="mandate">
+        <CardContent className="p-5">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium">Agent permission</span>
+                <Badge variant={mandate && !mandate.revoked ? 'default' : 'warning'}>
+                  {mandate && !mandate.revoked ? 'On' : 'Off'}
+                </Badge>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Limits how much GOL can pay and where it can send funds.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              className="rounded-full"
               onClick={() => props.onAction('sign_mandate')}
               disabled={!prerequisitesReady || props.busy !== null}
             >
-              Create mandate <span>→</span>
-            </button>
-          </>
-        ) : (
-          <>
-            {agentMismatch && (
-              <div className="control-callout" data-step="mandate">
-                <div>
-                  <strong>This mandate authorizes a retired signer</strong>
-                  <p>
-                    Mandate #{props.account?.activeMandateId} names{' '}
-                    <code title={mandate!.agent}>{shorten(mandate!.agent)}</code>. The current agent
-                    signer is <code title={currentAgent ?? ''}>{shorten(currentAgent ?? '')}</code>.
-                    Create a new mandate so the agent can execute payments; creating it revokes this
-                    one.
-                  </p>
-                </div>
-                <button
-                  className="primary"
-                  onClick={() => props.onAction('sign_mandate')}
-                  disabled={props.busy !== null}
-                >
-                  Replace mandate <span>→</span>
-                </button>
+              {mandate && !mandate.revoked ? 'Edit rules' : 'Set payment rules'}
+            </Button>
+          </div>
+
+          {mandate && !mandate.revoked ? (
+            <div className="mt-5 grid gap-3 border-t border-border pt-5 @min-[560px]:grid-cols-3">
+              <div>
+                <span className="text-xs text-muted-foreground">Total left</span>
+                <strong className="mt-1 block text-base">
+                  {formatUsdc(ruleRemaining > 0n ? ruleRemaining : 0n)} USDC
+                </strong>
               </div>
-            )}
-            <p className="control-note">
-              The owner can revoke this mandate at any time. Revocation preserves its payment
-              history.
-            </p>
-          </>
-        )}
-        {mandateStep.status !== 'complete' && !prerequisitesReady && (
-          <small className="prerequisite-note">
-            Complete the account requirements above first.
-          </small>
-        )}
-      </div>
+              <div>
+                <span className="text-xs text-muted-foreground">Per payment</span>
+                <strong className="mt-1 block text-base">
+                  {formatUsdc(BigInt(mandate.perPaymentCapUnits))} USDC max
+                </strong>
+              </div>
+              <div>
+                <span className="text-xs text-muted-foreground">Can pay</span>
+                <strong className="mt-1 block truncate text-base" title={recipient?.address ?? ''}>
+                  {recipient?.label ?? 'No recipient'}
+                </strong>
+              </div>
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      {accountStep.status === 'complete' && agentStep.status !== 'complete' && (
+        <Card className="border-primary/20 bg-accent shadow-none" data-step="agent_wallet">
+          <CardContent className="flex flex-wrap items-center justify-between gap-4 p-4">
+            <div>
+              <strong className="text-sm">Allow GOL to send approved payments</strong>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Choose one recipient. Your personal wallet stays out of reach.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => props.onAction('provision_agent')}
+              disabled={props.busy !== null}
+            >
+              Choose recipient
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {agentGas && agentStep.status === 'complete' && agentGas.status !== 'complete' && (
+        <Card className="border-primary/20 bg-accent shadow-none" data-step="agent_gas">
+          <CardContent className="flex flex-wrap items-center justify-between gap-4 p-4">
+            <div>
+              <strong className="text-sm">Add Arc network fees</strong>
+              <p className="mt-1 text-xs text-muted-foreground">
+                A separate 1 USDC fee reserve lets GOL submit payments.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => props.onAction('fund_agent_gas')}
+              disabled={props.busy !== null}
+            >
+              Add fee reserve
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {agentMismatch ? (
+        <Alert>
+          <AlertTitle>Agent access is out of date</AlertTitle>
+          <AlertDescription>
+            Replace the payment rule so it uses the current agent wallet.
+          </AlertDescription>
+          <Button
+            className="mt-3 rounded-full"
+            size="sm"
+            onClick={() => props.onAction('sign_mandate')}
+            disabled={props.busy !== null}
+          >
+            Update rule
+          </Button>
+        </Alert>
+      ) : null}
+      {mandateStep.status !== 'complete' && !prerequisitesReady ? (
+        <p className="text-xs text-muted-foreground">Finish the setup step shown above first.</p>
+      ) : null}
     </div>
+  );
+}
+
+function CopyAddress({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      aria-label="Copy address"
+      className="size-6 rounded-full text-muted-foreground hover:text-primary"
+      onClick={async () => {
+        await navigator.clipboard.writeText(value);
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1200);
+      }}
+    >
+      {copied ? <ShieldCheck size={12} /> : <Copy size={12} />}
+    </Button>
   );
 }
 
@@ -778,43 +1574,38 @@ function PrivateKeyWarning(props: {
   error: string | null;
 }) {
   return (
-    <div className="warning-backdrop" role="presentation">
-      <section
-        className="warning-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="private-key-warning-title"
-      >
-        <p className="kicker">SENSITIVE WALLET EXPORT</p>
-        <h2 id="private-key-warning-title">Never share your private key</h2>
-        <p>
-          Anyone with this key can control your owner wallet, revoke or create mandates, and
-          withdraw funds from your GOL account. GOL cannot recover stolen funds.
-        </p>
-        <ul>
+    <Dialog open onOpenChange={(open) => !open && props.onCancel()}>
+      <DialogContent>
+        <span className="font-mono text-[9px] uppercase tracking-[.18em] text-destructive">
+          Sensitive wallet export
+        </span>
+        <DialogTitle id="private-key-warning-title" className="mt-2 text-xl font-semibold">
+          Never share your private key
+        </DialogTitle>
+        <DialogDescription className="mt-3 text-sm leading-copy text-muted-foreground">
+          Anyone with this key can control your wallet, change payment rules, and withdraw payment
+          funds. GOL cannot recover stolen funds.
+        </DialogDescription>
+        <ul className="mt-4 list-disc space-y-2 pl-5 text-sm text-foreground">
           <li>Make sure nobody can see or record your screen.</li>
           <li>Never paste the key into a website, message, or support chat.</li>
           <li>Store it offline in a secure location.</li>
         </ul>
-        <p className="dialog-note">
-          Privy displays the owner wallet key in its isolated export flow. GOL never receives it.
-          The GOL smart-contract account itself has no private key.
+        <p className="mt-4 rounded-xl bg-warning/10 p-3 text-xs leading-copy text-warning">
+          Privy displays your wallet key in its secure export flow. GOL never receives it. The
+          payment account is a contract and has no private key.
         </p>
-        {props.error && <p className="dialog-error">{props.error}</p>}
-        <div className="review-actions">
-          <button className="secondary" onClick={props.onCancel} type="button">
+        {props.error && <p className="mt-3 text-xs text-destructive">{props.error}</p>}
+        <div className="mt-6 grid grid-cols-2 gap-2">
+          <Button variant="outline" onClick={props.onCancel}>
             Cancel
-          </button>
-          <button
-            className="primary danger-button"
-            onClick={() => void props.onContinue()}
-            type="button"
-          >
+          </Button>
+          <Button variant="destructive" onClick={() => void props.onContinue()}>
             I understand, continue to Privy
-          </button>
+          </Button>
         </div>
-      </section>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -827,69 +1618,54 @@ function ConsentPanel(props: {
   onConfirm: () => void;
   disabled: boolean;
 }) {
-  const account = props.account?.accountAddress ?? null;
   const isKms = props.config.agentSignerProvider === 'aws_kms';
   return (
-    <div className="review" data-testid="agent-consent">
-      <p className="kicker">
-        {isKms ? 'REVIEW THE RESTRICTED AGENT SIGNER' : 'REVIEW BEFORE PROVISIONING'}
-      </p>
-      <dl>
-        <dt>Signer</dt>
-        <dd>
-          {isKms
-            ? 'AWS KMS-backed agent. The key is non-exportable and the backend never holds it.'
-            : 'A separate Privy agent wallet with a default-deny signer policy.'}
-        </dd>
-        <dt>Purpose</dt>
-        <dd>Submit GOL payment requests to your account contract and nothing else.</dd>
-        <dt>Chain</dt>
-        <dd>
-          {props.config.chainName} · eip155:{props.config.chainId}
-        </dd>
-        <dt>Only destination</dt>
-        <dd>
-          <code>{account ?? 'account not created yet'}</code>
-        </dd>
-        {isKms && props.config.agentSignerAddress ? (
-          <>
-            <dt>KMS agent address</dt>
-            <dd>
-              <code>{props.config.agentSignerAddress}</code>
-            </dd>
-          </>
-        ) : null}
-        <dt>Native value</dt>
-        <dd>Exactly zero. The signer can never move native balance.</dd>
-        <dt>Mandate authority</dt>
-        <dd>
-          {isKms
-            ? 'The on-chain GolAccount enforces recipient, caps, expiry, and revocation. AWS KMS cannot inspect the transaction and does not understand mandate policy.'
-            : 'Denied by default. Calldata is not restricted by this policy.'}
-        </dd>
-        <dt>Revocation</dt>
-        <dd>Revoke the mandate from your owner wallet at any time.</dd>
-      </dl>
-      <label htmlFor="recipient">Approved recipient address</label>
-      <input
-        id="recipient"
-        className="setup-input"
-        placeholder="0x contractor address"
-        value={props.recipientInput}
-        onChange={(event) => props.setRecipientInput(event.target.value)}
-      />
-      <div className="review-actions">
-        <button className="secondary" onClick={props.onCancel}>
-          Cancel
-        </button>
-        <button className="primary" onClick={props.onConfirm} disabled={props.disabled}>
-          {isKms
-            ? 'I understand, link the KMS-backed agent'
-            : 'I understand, provision the agent wallet'}{' '}
-          <span>→</span>
-        </button>
-      </div>
-    </div>
+    <Dialog open onOpenChange={(open) => !open && props.onCancel()}>
+      <DialogContent data-testid="agent-consent" className="max-w-2xl">
+        <span className="font-mono text-[9px] uppercase tracking-[.18em] text-primary">
+          Payment access
+        </span>
+        <DialogTitle className="mt-2 text-xl font-semibold">Choose a payment recipient</DialogTitle>
+        <DialogDescription className="mt-2 text-sm leading-copy">
+          GOL will only be able to pay the address you choose here.
+        </DialogDescription>
+        <div className="mt-5 grid gap-2 rounded-card border border-border bg-muted p-4 text-xs">
+          <p>
+            <strong>Uses:</strong> payment funds only
+          </p>
+          <p>
+            <strong>Can pay:</strong> one address you approve
+          </p>
+          <p>
+            <strong>Cannot access:</strong> your personal wallet
+          </p>
+          <p>
+            <strong>You stay in control:</strong> change or turn off the rules anytime
+          </p>
+        </div>
+        <Label className="mt-5 block text-xs font-medium" htmlFor="recipient">
+          Recipient wallet address
+        </Label>
+        <p className="mt-1 text-xs leading-copy text-muted-foreground">
+          For this demo, your own wallet is prefilled. Replace it with a contractor or merchant.
+        </p>
+        <Input
+          id="recipient"
+          className="mt-2"
+          placeholder="0x recipient wallet address"
+          value={props.recipientInput}
+          onChange={(event) => props.setRecipientInput(event.target.value)}
+        />
+        <div className="mt-6 grid grid-cols-2 gap-2">
+          <Button variant="outline" onClick={props.onCancel}>
+            Cancel
+          </Button>
+          <Button onClick={props.onConfirm} disabled={props.disabled}>
+            {isKms ? 'Connect payment agent' : 'Create payment agent'} <ArrowUpRight size={14} />
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -908,7 +1684,7 @@ function AmountEntryPanel(props: {
     try {
       const units = parseUsdc(amount);
       if (isWithdraw && units > BigInt(props.availableUnits)) {
-        setError('The withdrawal amount exceeds the GOL account balance.');
+        setError('This is more than your payment balance.');
         return;
       }
       props.onConfirm(units.toString());
@@ -918,36 +1694,47 @@ function AmountEntryPanel(props: {
   }
 
   return (
-    <form className="review" data-testid="amount-entry" onSubmit={submit}>
-      <p className="kicker">
-        {isWithdraw ? 'WITHDRAW FROM GOL ACCOUNT' : 'DEPOSIT TO GOL ACCOUNT'}
-      </p>
-      <label htmlFor="account-amount">Amount (USDC)</label>
-      <input
-        id="account-amount"
-        className="setup-input"
-        inputMode="decimal"
-        autoFocus
-        placeholder="0.00"
-        value={amount}
-        onChange={(event) => {
-          setAmount(event.target.value);
-          setError(null);
-        }}
-      />
-      {isWithdraw && (
-        <p className="control-note">Available: {formatUsdc(BigInt(props.availableUnits))} USDC</p>
-      )}
-      {error && <p className="dialog-error">{error}</p>}
-      <div className="review-actions">
-        <button className="secondary" onClick={props.onCancel} type="button">
-          Cancel
-        </button>
-        <button className="primary" type="submit">
-          Review {props.action} <span>→</span>
-        </button>
-      </div>
-    </form>
+    <Dialog open onOpenChange={(open) => !open && props.onCancel()}>
+      <DialogContent data-testid="amount-entry">
+        <form onSubmit={submit}>
+          <span className="font-mono text-[9px] uppercase tracking-[.18em] text-primary">
+            {isWithdraw ? 'WITHDRAW PAYMENT FUNDS' : 'ADD PAYMENT FUNDS'}
+          </span>
+          <DialogTitle className="mt-2 text-xl font-semibold">
+            {isWithdraw ? 'Withdraw payment funds' : 'Add payment funds'}
+          </DialogTitle>
+          <label className="mt-6 block text-xs font-medium" htmlFor="account-amount">
+            Amount (USDC)
+          </label>
+          <Input
+            id="account-amount"
+            className="mt-2 h-14 text-xl"
+            inputMode="decimal"
+            autoFocus
+            placeholder="0.00"
+            value={amount}
+            onChange={(event) => {
+              setAmount(event.target.value);
+              setError(null);
+            }}
+          />
+          {isWithdraw && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Available: {formatUsdc(BigInt(props.availableUnits))} USDC
+            </p>
+          )}
+          {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+          <div className="mt-6 grid grid-cols-2 gap-2">
+            <Button variant="outline" onClick={props.onCancel} type="button">
+              Cancel
+            </Button>
+            <Button type="submit">
+              Review transfer <ArrowUpRight size={14} />
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -958,30 +1745,55 @@ function TransferReviewPanel(props: {
   onConfirm: () => void;
   disabled: boolean;
 }) {
+  const fromLabel = props.review.kind === 'withdraw' ? 'Payment funds' : 'Your wallet';
+
   return (
-    <div className="review" data-testid="transfer-review">
-      <p className="kicker">REVIEW BEFORE SIGNATURE</p>
-      <dl>
-        <dt>Action</dt>
-        <dd>{props.review.title}</dd>
-        <dt>Exact amount</dt>
-        <dd>{formatUsdc(BigInt(props.review.amountUnits))} USDC</dd>
-        <dt>{props.review.destinationLabel}</dt>
-        <dd>
-          <code>{props.review.destination}</code>
-        </dd>
-        <dt>Note</dt>
-        <dd>{props.review.note}</dd>
-      </dl>
-      <div className="review-actions">
-        <button className="secondary" onClick={props.onCancel}>
-          Cancel
-        </button>
-        <button className="primary" onClick={props.onConfirm} disabled={props.disabled}>
-          Sign transfer <span>→</span>
-        </button>
-      </div>
-    </div>
+    <Dialog open onOpenChange={(open) => !open && props.onCancel()}>
+      <DialogContent data-testid="transfer-review">
+        <span className="font-mono text-[9px] uppercase tracking-[.18em] text-primary">
+          Confirm transfer
+        </span>
+        <DialogTitle className="mt-2 text-xl font-semibold">{props.review.title}</DialogTitle>
+        <DialogDescription className="mt-2 text-sm leading-copy">
+          Check the amount and destination before your wallet asks for approval.
+        </DialogDescription>
+
+        <Card className="mt-5 bg-muted shadow-none">
+          <CardContent className="p-5 text-center">
+            <span className="text-xs text-muted-foreground">Amount</span>
+            <strong className="mt-1 block text-3xl">
+              {formatUsdc(BigInt(props.review.amountUnits))} USDC
+            </strong>
+          </CardContent>
+        </Card>
+
+        <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
+          <div className="rounded-card border border-border p-4">
+            <span className="text-muted-foreground">From</span>
+            <strong className="mt-1 block">{fromLabel}</strong>
+          </div>
+          <div className="min-w-0 rounded-card border border-border p-4">
+            <span className="text-muted-foreground">To</span>
+            <strong className="mt-1 block">{props.review.destinationLabel}</strong>
+            <div className="mt-2 flex items-center gap-1 text-muted-foreground">
+              <code className="truncate" title={props.review.destination}>
+                {shorten(props.review.destination)}
+              </code>
+              <CopyAddress value={props.review.destination} />
+            </div>
+          </div>
+        </div>
+        <p className="mt-3 text-xs leading-copy text-muted-foreground">{props.review.note}</p>
+        <div className="mt-6 grid grid-cols-2 gap-2">
+          <Button variant="outline" onClick={props.onCancel}>
+            Cancel
+          </Button>
+          <Button onClick={props.onConfirm} disabled={props.disabled}>
+            Continue to wallet <ArrowUpRight size={14} />
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1008,7 +1820,7 @@ function MandateReviewPanel(props: {
       const perPaymentUnits = parseUsdc(perPayment);
       const cumulativeUnits = parseUsdc(cumulative);
       if (perPaymentUnits > cumulativeUnits) {
-        setError('The per-payment cap cannot exceed the cumulative cap.');
+        setError('The maximum for one payment cannot exceed the total spending limit.');
         return;
       }
       props.onChange({
@@ -1022,171 +1834,185 @@ function MandateReviewPanel(props: {
   }
 
   return (
-    <div className="review" data-testid="mandate-review">
-      <p className="kicker">REVIEW BEFORE SIGNATURE</p>
-      <dl>
-        <dt>Agent wallet</dt>
-        <dd>
-          <code>{props.draft.agent}</code>
-        </dd>
-        <dt>Per-payment cap</dt>
-        <dd>
-          <input
-            aria-label="Per-payment cap (USDC)"
-            className="setup-input compact-input"
-            inputMode="decimal"
-            value={perPaymentCap}
-            onChange={(event) => updateCaps(event.target.value, cumulativeCap)}
-          />
-        </dd>
-        <dt>Cumulative cap</dt>
-        <dd>
-          <input
-            aria-label="Cumulative cap (USDC)"
-            className="setup-input compact-input"
-            inputMode="decimal"
-            value={cumulativeCap}
-            onChange={(event) => updateCaps(perPaymentCap, event.target.value)}
-          />
-        </dd>
-        <dt>Approved recipient</dt>
-        <dd>
-          {props.draft.recipientLabel} <code>{props.draft.recipient}</code>
-        </dd>
-        <dt>Expiry</dt>
-        <dd>{new Date(Number(props.draft.expiresAt) * 1000).toUTCString()}</dd>
-      </dl>
-      {error && <p className="dialog-error">{error}</p>}
-      <div className="review-actions">
-        <button className="secondary" onClick={props.onCancel}>
-          Cancel
-        </button>
-        <button className="primary" onClick={props.onConfirm} disabled={props.disabled || !!error}>
-          Sign mandate <span>→</span>
-        </button>
-      </div>
-    </div>
+    <Dialog open onOpenChange={(open) => !open && props.onCancel()}>
+      <DialogContent data-testid="mandate-review" className="max-w-xl">
+        <span className="font-mono text-[9px] uppercase tracking-[.18em] text-primary">
+          Payment rules
+        </span>
+        <DialogTitle className="mt-2 text-xl font-semibold">Set payment rules</DialogTitle>
+        <DialogDescription className="mt-2 text-sm leading-copy">
+          Set what GOL is allowed to pay. No money moves when you save these rules.
+        </DialogDescription>
+        <dl className="mt-5 grid gap-4 text-xs [&_dd]:m-0 [&_dd]:text-foreground [&_dt]:font-medium">
+          <div>
+            <dt>Maximum for one payment</dt>
+            <dd>
+              <Input
+                className="mt-2"
+                aria-label="Per-payment cap (USDC)"
+                inputMode="decimal"
+                value={perPaymentCap}
+                onChange={(event) => updateCaps(event.target.value, cumulativeCap)}
+              />
+            </dd>
+          </div>
+          <div>
+            <dt>Total allowed for 7 days</dt>
+            <dd>
+              <Input
+                className="mt-2"
+                aria-label="Total spending limit (USDC)"
+                inputMode="decimal"
+                value={cumulativeCap}
+                onChange={(event) => updateCaps(perPaymentCap, event.target.value)}
+              />
+            </dd>
+          </div>
+          <div className="rounded-card border border-border bg-muted p-4">
+            <dt className="text-muted-foreground">Only pay</dt>
+            <dd className="mt-1! font-medium">{props.draft.recipientLabel}</dd>
+            <code
+              className="mt-1 block text-[10px] text-muted-foreground"
+              title={props.draft.recipient}
+            >
+              {shorten(props.draft.recipient)}
+            </code>
+          </div>
+        </dl>
+        {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
+        <div className="mt-6 grid grid-cols-2 gap-2">
+          <Button variant="outline" onClick={props.onCancel}>
+            Cancel
+          </Button>
+          <Button onClick={props.onConfirm} disabled={props.disabled || !!error}>
+            Save payment rules <ArrowUpRight size={14} />
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AaveTransactionReview({
+  review,
+  onCancel,
+  onConfirm,
+  disabled,
+}: {
+  review: PreparedAaveReview;
+  onCancel: () => void;
+  onConfirm: () => void;
+  disabled: boolean;
+}) {
+  const { transaction } = review;
+  const network = transaction.chainId === 1 ? 'Ethereum' : 'Avalanche';
+  return (
+    <Dialog open onOpenChange={(open) => !open && onCancel()}>
+      <DialogContent data-testid="aave-transaction-review" className="max-w-xl">
+        <div className="flex items-center gap-3">
+          <div className="grid size-10 place-items-center rounded-lg bg-accent">
+            <AaveLogo className="size-6" />
+          </div>
+          <div>
+            <span className="font-mono text-[9px] uppercase tracking-[.16em] text-primary">
+              Aave unsigned transaction
+            </span>
+            <DialogTitle className="mt-1 text-xl font-semibold">
+              Review {review.step === 'approval' ? 'token approval' : 'protocol action'}
+            </DialogTitle>
+          </div>
+        </div>
+        <DialogDescription className="mt-3 leading-copy">
+          GOL did not sign or submit this transaction. Confirm the network, destination, value and
+          calldata before opening your owner wallet.
+        </DialogDescription>
+        <div className="mt-5 grid gap-3 rounded-xl border border-border bg-muted p-4 text-xs sm:grid-cols-2">
+          <div>
+            <span className="text-muted-foreground">Network</span>
+            <strong className="mt-1 block">{network}</strong>
+            <code className="text-[10px] text-muted-foreground">chain {transaction.chainId}</code>
+          </div>
+          <div>
+            <span className="text-muted-foreground">Native value</span>
+            <strong className="mt-1 block break-all">{transaction.value} wei</strong>
+          </div>
+          <div className="sm:col-span-2">
+            <span className="text-muted-foreground">From</span>
+            <code className="mt-1 block break-all text-[10px]">{transaction.from}</code>
+          </div>
+          <div className="sm:col-span-2">
+            <span className="text-muted-foreground">To</span>
+            <code className="mt-1 block break-all text-[10px]">{transaction.to}</code>
+          </div>
+          <div className="sm:col-span-2">
+            <span className="text-muted-foreground">Calldata</span>
+            <code className="mt-1 block max-h-24 overflow-y-auto break-all text-[10px] leading-copy">
+              {transaction.data}
+            </code>
+          </div>
+          {transaction.operations.length > 0 && (
+            <div className="sm:col-span-2">
+              <span className="text-muted-foreground">Operations</span>
+              <strong className="mt-1 block">{transaction.operations.join(', ')}</strong>
+            </div>
+          )}
+        </div>
+        {review.warnings.length > 0 && (
+          <Alert className="mt-4 border-warning/30 bg-warning/10 text-warning">
+            <CircleAlert className="size-4" />
+            <div>
+              <AlertTitle>Aave notice</AlertTitle>
+              <AlertDescription>{review.warnings[0]}</AlertDescription>
+            </div>
+          </Alert>
+        )}
+        {review.step === 'approval' && (
+          <p className="mt-3 text-xs leading-copy text-muted-foreground">
+            This signs only the allowance step. After confirmation, ask the agent to prepare the
+            Aave action again using the updated allowance.
+          </p>
+        )}
+        <div className="mt-6 flex justify-end gap-2">
+          <Button variant="outline" onClick={onCancel} disabled={disabled}>
+            Cancel
+          </Button>
+          <Button onClick={onConfirm} disabled={disabled}>
+            Review in wallet <ArrowUpRight size={14} />
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
 function TransactionStatus({ tx, config }: { tx: TransactionState; config: PublicConfig }) {
   if (tx.phase === 'idle' || tx.kind === null) return null;
   return (
-    <div className={`tx-status ${tx.phase}`} role="status" data-testid="owner-transaction">
-      <strong>{TRANSACTION_PHASES[tx.phase]}</strong>
-      {tx.detail && <span>{tx.detail}</span>}
-      {tx.hash && (
-        <a href={explorerTxUrl(config, tx.hash)} target="_blank" rel="noreferrer">
+    <div
+      className={`mx-5 mb-5 flex flex-wrap items-center gap-3 rounded-full border px-4 py-3 text-xs sm:mx-6 ${tx.phase === 'failed' ? 'border-destructive/20 bg-destructive/10 text-destructive' : tx.phase === 'confirmed' ? 'border-success/20 bg-success/10 text-success' : 'border-primary/20 bg-accent text-accent-foreground'}`}
+      role="status"
+      data-testid="owner-transaction"
+    >
+      <strong>
+        {tx.kind === 'aave_action'
+          ? tx.phase === 'submitted'
+            ? 'Submitted to Aave network'
+            : tx.phase === 'confirmed'
+              ? 'Confirmed on Aave network'
+              : TRANSACTION_PHASES[tx.phase]
+          : TRANSACTION_PHASES[tx.phase]}
+      </strong>
+      {tx.detail && <span className="text-muted-foreground">{tx.detail}</span>}
+      {tx.hash && tx.kind !== 'aave_action' && (
+        <a
+          className="ml-auto font-mono text-[10px]"
+          href={explorerTxUrl(config, tx.hash)}
+          target="_blank"
+          rel="noreferrer"
+        >
           {shorten(tx.hash)} ↗
         </a>
       )}
-    </div>
-  );
-}
-
-function PaymentStatus({ payment, config }: { payment: PaymentView; config: PublicConfig }) {
-  const stage = PAYMENT_STAGES[payment.stage];
-  return (
-    <div className="run-state" role="status" data-testid="payment-stage">
-      <i />
-      <div>
-        <strong>{stage.label}</strong>
-        <span>{stage.detail}</span>
-        {payment.rule && payment.stage === 'refused' && <span>Rule {payment.rule}</span>}
-        {payment.headroomUnits && payment.stage === 'refused' && (
-          <span>{formatUsdc(BigInt(payment.headroomUnits))} USDC of headroom remained.</span>
-        )}
-        {payment.detail && <span>{payment.detail}</span>}
-        {payment.warning && <span className="warn">{payment.warning}</span>}
-        {payment.txHash && (
-          <a
-            href={payment.explorerUrl ?? explorerTxUrl(config, payment.txHash)}
-            target="_blank"
-            rel="noreferrer"
-          >
-            {shorten(payment.txHash)} ↗
-          </a>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function Identities({
-  config,
-  account,
-}: {
-  config: PublicConfig;
-  account: AccountSnapshot | null;
-}) {
-  const rows: Array<[string, string | null]> = [
-    ['Owner wallet', account?.ownerAddress ?? null],
-    ['GOL account', account?.accountAddress ?? null],
-    ['Agent wallet', account?.agentAddress ?? null],
-    ['Approved recipient', account?.recipients[0]?.address ?? null],
-  ];
-  return (
-    <div className="identities">
-      {rows.map(([label, value]) => (
-        <div key={label}>
-          <span>{label}</span>
-          {value ? (
-            <AddressChip config={config} value={value} />
-          ) : (
-            <code className="muted">not configured yet</code>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function AddressChip({ config, value }: { config: PublicConfig; value: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <span className="address-chip">
-      <code title={value}>{shorten(value)}</code>
-      <button
-        type="button"
-        aria-label={`Copy address ${value}`}
-        onClick={() => {
-          void navigator.clipboard?.writeText(value);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1_500);
-        }}
-      >
-        {copied ? 'Copied' : 'Copy'}
-      </button>
-      <a href={explorerAddressUrl(config, value)} target="_blank" rel="noreferrer">
-        Explorer ↗
-      </a>
-    </span>
-  );
-}
-
-function Balances({ config, account }: { config: PublicConfig; account: AccountSnapshot | null }) {
-  const balances = account?.balances;
-  return (
-    <div className="balances">
-      <div>
-        <span>GOL payment balance</span>
-        <strong>{balances ? formatUsdc(BigInt(balances.accountUsdcUnits)) : '—'} USDC</strong>
-        <small>ERC-20 view. Spendable by the mandate.</small>
-      </div>
-      <div>
-        <span>Owner gas</span>
-        <strong>{balances ? `${formatNativeGas(BigInt(balances.ownerGasWei))} USDC` : '—'}</strong>
-        <small>Native Arc gas view. Never added to the payment balance.</small>
-      </div>
-      <div>
-        <span>Agent gas reserve</span>
-        <strong>{balances ? `${formatNativeGas(BigInt(balances.agentGasWei))} USDC` : '—'}</strong>
-        <small>
-          {config.agentGasManaged
-            ? 'Funded by the GOL operator. Never drawn from your account balance or mandate.'
-            : `Top-ups of ${formatUsdc(BigInt(config.agentGasTopUpUnits))} USDC sit outside the mandate budget.`}
-        </small>
-      </div>
     </div>
   );
 }
@@ -1195,7 +2021,7 @@ function freshnessLabel(page: ActivityPage | null, lastGood: ActivityPage | null
   if (!page && !lastGood) return 'NOT LOADED';
   if (page?.integrityMismatch) return 'INTEGRITY MISMATCH';
   if (!page || page.freshness === 'unavailable') {
-    return lastGood ? 'UNAVAILABLE — SHOWING LAST INDEXED RESULT' : 'UNAVAILABLE';
+    return lastGood ? 'UNAVAILABLE: SHOWING LAST INDEXED RESULT' : 'UNAVAILABLE';
   }
   if (page.freshness === 'stale') return 'STALE';
   if (page.freshness === 'catching_up') return 'CATCHING UP';
@@ -1203,92 +2029,6 @@ function freshnessLabel(page: ActivityPage | null, lastGood: ActivityPage | null
   return 'CURRENT';
 }
 
-function AnswerPanel(props: {
-  question: string;
-  setQuestion: (value: string) => void;
-  onAsk: (event: FormEvent) => void;
-  answer: GroundedAnswer | null;
-  asking: boolean;
-  disabled: boolean;
-}) {
-  return (
-    <article className="panel question-panel">
-      <div className="panel-heading">
-        <div>
-          <p className="kicker">READ-ONLY QUESTIONS</p>
-          <h2>Ask the record</h2>
-        </div>
-        <span className="lock">◇ No signing access</span>
-      </div>
-      <form onSubmit={props.onAsk}>
-        <label htmlFor="question">Question about indexed activity</label>
-        <div className="question-input">
-          <input
-            id="question"
-            value={props.question}
-            onChange={(event) => props.setQuestion(event.target.value)}
-            maxLength={1000}
-          />
-          <button type="submit" aria-label="Ask question" disabled={props.disabled || props.asking}>
-            →
-          </button>
-        </div>
-      </form>
-      {props.answer ? (
-        <div className="answer" role="status" data-testid="grounded-answer">
-          <span className="answer-label">
-            {answerLabel(props.answer)} · {props.answer.recordCount} RECORD
-            {props.answer.recordCount === 1 ? '' : 'S'}
-          </span>
-          <p>{props.answer.text}</p>
-          <div className="answer-meta">
-            <span>
-              {props.answer.indexedBlock
-                ? `Indexed through block ${props.answer.indexedBlock}`
-                : 'No indexed block'}
-            </span>
-            <span>{props.answer.sourceDeployment ?? 'no deployment reported'}</span>
-            <span>Freshness {props.answer.freshness}</span>
-            {props.answer.partial && <span>Partial evidence set</span>}
-            <span>
-              {props.answer.deterministic ? 'Deterministic explanation' : 'Model explanation'}
-            </span>
-          </div>
-          {props.answer.citations.length > 0 && (
-            <ul className="citations">
-              {props.answer.citations.map((citation) => (
-                <li key={`${citation.txHash}:${citation.logIndex}`}>
-                  <a href={citation.explorerUrl} target="_blank" rel="noreferrer">
-                    {shorten(citation.txHash)} · log {citation.logIndex} ↗
-                  </a>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      ) : (
-        <div className="question-empty">
-          <span>?</span>
-          <p>
-            Answers use indexed events only.
-            <br />
-            They cannot initiate a payment.
-          </p>
-        </div>
-      )}
-    </article>
-  );
-}
-
-function answerLabel(answer: GroundedAnswer): string {
-  if (answer.status === 'model_error') return 'EXPLANATION UNAVAILABLE';
-  if (answer.status === 'unavailable') return 'EVIDENCE UNAVAILABLE';
-  if (answer.status === 'empty') return 'NO MATCHING RECORDS';
-  if (answer.status === 'stale') return 'GROUNDED ANSWER (STALE)';
-  if (answer.status === 'partial') return 'GROUNDED ANSWER (PARTIAL)';
-  return 'GROUNDED ANSWER';
-}
-
 function shorten(value: string): string {
-  return value.length > 14 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value;
+  return value.length > 14 ? `${value.slice(0, 8)}...${value.slice(-4)}` : value;
 }

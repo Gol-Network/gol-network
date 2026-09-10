@@ -18,6 +18,7 @@ import {
 } from 'viem';
 import type { PublicConfig } from '@/config';
 import type { TransactionPhase, TransactionReporter } from '@/client/types';
+import type { PreparedAaveTransaction } from '@/client/aave-transactions';
 
 export interface MandateDraft {
   agent: Address;
@@ -234,6 +235,106 @@ export async function withdraw(
       args: [amount],
     }),
   );
+}
+
+export async function sendPreparedTransaction(
+  provider: OwnerProvider,
+  transaction: PreparedAaveTransaction,
+  report: TransactionReporter,
+) {
+  const chainId = await provider.request({ method: 'eth_chainId' });
+  if (Number(chainId) !== transaction.chainId) {
+    try {
+      await provider.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: `0x${transaction.chainId.toString(16)}` }],
+      });
+    } catch (error) {
+      const classified = classifyOwnerError(error);
+      const switchError = new OwnerTransactionError(
+        classified.phase,
+        'Switch to the prepared Aave network first.',
+      );
+      report({ phase: switchError.phase, detail: switchError.message });
+      throw switchError;
+    }
+    const switchedChainId = await provider.request({ method: 'eth_chainId' });
+    if (Number(switchedChainId) !== transaction.chainId) {
+      const switchError = new OwnerTransactionError(
+        'failed',
+        'The wallet did not switch to the prepared Aave network.',
+      );
+      report({ phase: switchError.phase, detail: switchError.message });
+      throw switchError;
+    }
+  }
+
+  const addresses = (await provider.request({ method: 'eth_requestAccounts' })) as Address[];
+  const owner = addresses[0];
+  if (!owner || owner.toLowerCase() !== transaction.from.toLowerCase()) {
+    const error = new OwnerTransactionError(
+      'failed',
+      'The prepared Aave transaction belongs to a different wallet.',
+    );
+    report({ phase: error.phase, detail: error.message });
+    throw error;
+  }
+
+  report({ phase: 'awaiting_signature' });
+  let hash: Hash;
+  try {
+    hash = (await provider.request({
+      method: 'eth_sendTransaction',
+      params: [
+        {
+          from: owner,
+          to: transaction.to,
+          data: transaction.data,
+          value: `0x${BigInt(transaction.value).toString(16)}`,
+        },
+      ],
+    })) as Hash;
+    if (!/^0x[0-9a-fA-F]{64}$/.test(hash)) throw new Error('Wallet returned an invalid hash.');
+  } catch (error) {
+    const classified = classifyOwnerError(error);
+    report({ phase: classified.phase, detail: classified.message });
+    throw classified;
+  }
+  report({ phase: 'submitted', hash, detail: `Submitted on chain ${transaction.chainId}.` });
+
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const receipt = (await provider.request({
+      method: 'eth_getTransactionReceipt',
+      params: [hash],
+    })) as { status?: string } | null;
+    if (!receipt) {
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      continue;
+    }
+    if (receipt.status === '0x0') {
+      const error = new OwnerTransactionError('reverted', 'The Aave transaction reverted.', hash);
+      report({ phase: error.phase, hash, detail: error.message });
+      throw error;
+    }
+    if (receipt.status !== '0x1') {
+      const error = new OwnerTransactionError(
+        'failed',
+        'The wallet returned an invalid Aave receipt.',
+        hash,
+      );
+      report({ phase: error.phase, hash, detail: error.message });
+      throw error;
+    }
+    report({ phase: 'confirmed', hash, detail: `Confirmed on chain ${transaction.chainId}.` });
+    return hash;
+  }
+  const error = new OwnerTransactionError(
+    'failed',
+    'The Aave receipt is still pending. Check the wallet before retrying.',
+    hash,
+  );
+  report({ phase: error.phase, hash, detail: error.message });
+  throw error;
 }
 
 export async function readAccountUsdc(config: PublicConfig, account: Address): Promise<bigint> {

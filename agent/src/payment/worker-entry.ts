@@ -3,7 +3,8 @@ import { addressSchema } from '@gol/protocol';
 import { Pool } from 'pg';
 import { PgJournal, type JournalRequest } from '../db/journal.js';
 import { OpenAIJsonModel } from '../model/openai.js';
-import { PrivyScopedSigner } from '../privy/signer.js';
+import { AGENT_POLICY_REVISION } from '../privy/policy.js';
+import { PrivyTransactionSigner } from '../privy/signer.js';
 import {
   AwsKmsSigner,
   createKmsClient,
@@ -93,8 +94,9 @@ if (provider === 'aws_kms') {
 const resolver: WorkerContextResolver = {
   async resolve(job: JournalRequest): Promise<WorkerContext> {
     const result = await pool.query(
-      `SELECT a.user_subject, a.account_address, a.agent_wallet_id, a.agent_address,
-              a.signer_provider, a.signer_key_arn, a.signer_region, a.signer_address,
+      `SELECT a.user_subject, a.account_address, a.agent_wallet_id, a.agent_address, a.policy_id,
+              a.policy_version, a.signer_provider, a.signer_key_arn, a.signer_region,
+              a.signer_address,
               r.address AS recipient_address, r.label
        FROM account_links a
        LEFT JOIN recipients r USING (account_address)
@@ -135,6 +137,10 @@ const resolver: WorkerContextResolver = {
       return { ...base, mode: 'aws_kms', signer: kmsSigner, kms: kmsConfig };
     }
 
+    if (String(link.policy_version ?? '') !== AGENT_POLICY_REVISION) {
+      throw new Error('Privy agent policy migration is required before the worker can sign');
+    }
+
     for (const name of [
       'PRIVY_APP_ID',
       'PRIVY_APP_SECRET',
@@ -143,14 +149,28 @@ const resolver: WorkerContextResolver = {
     ]) {
       if (!process.env[name]) throw new Error(`${name} is required for a privy account link`);
     }
+    for (const name of ['AGENT_MAX_GAS', 'AGENT_MAX_FEE_PER_GAS'] as const) {
+      if (!process.env[name]) throw new Error(`${name} is required for a privy account link`);
+    }
+    const policyId = link.policy_id ? String(link.policy_id) : 'unversioned-policy';
     return {
       ...base,
-      mode: 'privy',
-      signer: new PrivyScopedSigner(String(link.agent_wallet_id), {
+      mode: 'privy_raw',
+      signer: new PrivyTransactionSigner(String(link.agent_wallet_id), agentAddress, {
         appId: process.env.PRIVY_APP_ID!,
         appSecret: process.env.PRIVY_APP_SECRET!,
         authorizationPrivateKey: process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY!,
       }),
+      kms: {
+        keyArn: `privy-policy:${policyId}`,
+        maxGas: BigInt(process.env.AGENT_MAX_GAS!),
+        maxFeePerGas: BigInt(process.env.AGENT_MAX_FEE_PER_GAS!),
+        maxPriorityFeePerGas: BigInt(
+          process.env.AGENT_MAX_PRIORITY_FEE_PER_GAS ?? process.env.AGENT_MAX_FEE_PER_GAS!,
+        ),
+        gasMargin: Number(process.env.AGENT_GAS_MARGIN ?? '1.25'),
+        gasLowWatermark: BigInt(process.env.AGENT_GAS_LOW_WATERMARK ?? '0'),
+      },
     };
   },
 };

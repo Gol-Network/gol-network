@@ -18,10 +18,16 @@ export function Providers({ config, children }: { config: PublicConfig; children
     <PrivyProvider
       appId={config.privyAppId}
       config={{
+        loginMethods: ['email', 'google', 'passkey', 'wallet'],
         defaultChain: arcTestnet,
         supportedChains: [arcTestnet],
         embeddedWallets: { ethereum: { createOnLogin: 'users-without-wallets' } },
-        appearance: { theme: 'light', accentColor: '#ea5b36' },
+        appearance: {
+          theme: '#0b0b0c',
+          accentColor: '#3478f6',
+          logo: '/gol-mark-blue.svg',
+          landingHeader: 'Sign in to GOL Network',
+        },
       }}
     >
       {children}

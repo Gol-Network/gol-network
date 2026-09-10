@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto';
 import { PrivyClient } from '@privy-io/node';
 import { ARC_TESTNET_CHAIN_ID, addressSchema, golAccountAbi } from '@gol/protocol';
-import { agentPolicyDisclosure, buildAgentSignerPolicy } from '@gol/agent/privy';
+import {
+  AGENT_POLICY_REVISION,
+  agentPolicyDisclosure,
+  buildAgentSignerPolicy,
+} from '@gol/agent/privy';
 import { kmsAgentDisclosure } from '@gol/agent/signer-disclosure';
 import { z } from 'zod';
 import { arcClient } from '@/server/chain';
@@ -35,12 +39,18 @@ export async function POST(request: Request) {
     const existing = await pool.query('SELECT * FROM account_links WHERE user_subject = $1', [
       session.subject,
     ]);
-    if (existing.rowCount === 1) {
-      const row = existing.rows[0];
-      if (String(row.account_address).trim().toLowerCase() !== body.account.toLowerCase()) {
+    const existingRow = existing.rowCount === 1 ? existing.rows[0] : null;
+    if (existingRow) {
+      if (String(existingRow.account_address).trim().toLowerCase() !== body.account.toLowerCase()) {
         throw new HttpError(409, 'ACCOUNT_ALREADY_LINKED');
       }
-      return Response.json(agentResponse(row));
+      const existingProvider = String(existingRow.signer_provider ?? 'privy');
+      if (
+        existingProvider === 'aws_kms' ||
+        String(existingRow.policy_version ?? '') === AGENT_POLICY_REVISION
+      ) {
+        return Response.json(agentResponse(existingRow));
+      }
     }
 
     const { server } = runtimeConfig();
@@ -106,7 +116,7 @@ export async function POST(request: Request) {
       policy = await privy.policies().create({
         ...buildAgentSignerPolicy(body.account),
         owner: { user_id: session.subject },
-        idempotency_key: `gol-policy-${stableKey}`,
+        idempotency_key: `gol-policy-v${AGENT_POLICY_REVISION}-${stableKey}`,
       });
     } catch {
       throw new HttpError(502, 'PRIVY_POLICY_CREATION_FAILED');
@@ -118,19 +128,36 @@ export async function POST(request: Request) {
         display_name: 'GOL restricted agent',
         owner: { user_id: session.subject },
         additional_signers: [{ signer_id: signerId, override_policy_ids: [policy.id] }],
-        idempotency_key: `gol-wallet-${stableKey}`,
+        idempotency_key: `gol-wallet-v${AGENT_POLICY_REVISION}-${stableKey}`,
       });
     } catch {
       throw new HttpError(502, 'PRIVY_WALLET_CREATION_FAILED');
     }
-    const inserted = await pool.query(
-      `INSERT INTO account_links
-        (user_subject, owner_address, account_address, agent_wallet_id, agent_address, policy_id,
-         signer_provider)
-       VALUES ($1, $2, $3, $4, $5, $6, 'privy')
-       RETURNING *`,
-      [session.subject, body.ownerAddress, body.account, wallet.id, wallet.address, policy.id],
-    );
+    const inserted = existingRow
+      ? await pool.query(
+          `UPDATE account_links
+           SET agent_wallet_id = $2, agent_address = $3, policy_id = $4,
+               policy_version = $5, signer_provider = 'privy', updated_at = now()
+           WHERE user_subject = $1
+           RETURNING *`,
+          [session.subject, wallet.id, wallet.address, policy.id, AGENT_POLICY_REVISION],
+        )
+      : await pool.query(
+          `INSERT INTO account_links
+            (user_subject, owner_address, account_address, agent_wallet_id, agent_address, policy_id,
+             policy_version, signer_provider)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 'privy')
+           RETURNING *`,
+          [
+            session.subject,
+            body.ownerAddress,
+            body.account,
+            wallet.id,
+            wallet.address,
+            policy.id,
+            AGENT_POLICY_REVISION,
+          ],
+        );
     await pool.query(
       `INSERT INTO recipients (account_address, address, label) VALUES ($1, $2, $3)
        ON CONFLICT (account_address, address) DO UPDATE SET label = EXCLUDED.label`,
@@ -162,6 +189,7 @@ function agentResponse(row: Record<string, unknown>) {
     provider: 'privy' as const,
     walletId: row.agent_wallet_id ? String(row.agent_wallet_id) : null,
     policyId: row.policy_id ? String(row.policy_id) : null,
+    policyVersion: row.policy_version ? String(row.policy_version) : null,
     chainId: ARC_TESTNET_CHAIN_ID,
     policy: agentPolicyDisclosure(account),
   };
