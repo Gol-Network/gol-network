@@ -100,7 +100,7 @@ export function createFixtureBackend(config: PublicConfig): GolBackend {
             chain: `eip155:${config.chainId}`,
             chainId: config.chainId,
             destination: ACCOUNT,
-            allowedMethod: 'eth_sendTransaction',
+            allowedMethod: 'eth_signTransaction',
             nativeValue: '0',
             defaultAction: 'DENY',
             calldataRestricted: false,
@@ -205,6 +205,119 @@ export function createFixtureBackend(config: PublicConfig): GolBackend {
       await ownerTransaction(report, () => {
         accountUsdc = accountUsdc > units ? accountUsdc - units : 0n;
       });
+    },
+
+    async executeAaveTransaction(_transaction, report) {
+      await ownerTransaction(report, () => undefined);
+    },
+
+    async listMoneyTokens(chainId) {
+      if (chainId === 84_532) {
+        return [
+          {
+            symbol: 'USDC',
+            name: 'USD Coin',
+            address: '0x036CbD53842c5426634e7929541eC2318f3dCF7e' as Address,
+            decimals: 6,
+            chainId,
+            verified: true,
+            priceUsd: 1,
+            logoUri: null,
+          },
+          {
+            symbol: 'ETH',
+            name: 'Ethereum',
+            address: '0x0000000000000000000000000000000000000000' as Address,
+            decimals: 18,
+            chainId,
+            verified: true,
+            priceUsd: 3_000,
+            logoUri: null,
+          },
+        ];
+      }
+      return [
+        {
+          symbol: 'USDC',
+          name: 'USD Coin',
+          address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as Address,
+          decimals: 6,
+          chainId,
+          verified: true,
+          priceUsd: 1,
+          logoUri: null,
+        },
+        {
+          symbol: 'USDT',
+          name: 'Tether USD',
+          address: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2' as Address,
+          decimals: 6,
+          chainId,
+          verified: true,
+          priceUsd: 1,
+          logoUri: null,
+        },
+        {
+          symbol: 'ETH',
+          name: 'Ethereum',
+          address: '0x0000000000000000000000000000000000000000' as Address,
+          decimals: 18,
+          chainId,
+          verified: true,
+          priceUsd: 3_000,
+          logoUri: null,
+        },
+      ];
+    },
+
+    async quoteMoneySwap(input) {
+      const amount = Number(input.amount);
+      const crossChain = input.fromChainId !== input.toChainId;
+      return {
+        supported: true,
+        crossChain,
+        amountOut: { symbol: input.toToken.symbol, amount: amount * 0.995 },
+        amountOutMin: { symbol: input.toToken.symbol, amount: amount * 0.99 },
+        rate: 0.995,
+        route: [
+          {
+            tool: crossChain ? 'Fixture bridge' : 'Fixture swap',
+            fromSymbol: input.fromToken.symbol,
+            toSymbol: input.toToken.symbol,
+            fromChainId: input.fromChainId,
+            toChainId: input.toChainId,
+          },
+        ],
+        fees: [{ symbol: input.fromToken.symbol, amount: amount * 0.005 }],
+        slippageBps: input.maxSlippageBps,
+        estimatedDurationSec: crossChain ? 90 : 12,
+      };
+    },
+
+    async executeMoneySwap(input, report) {
+      let txHash: `0x${string}` | null = null;
+      await ownerTransaction(report, () => {
+        txHash = hash(nonce - 1);
+      });
+      return {
+        txHash,
+        ...(input.fromChainId !== input.toChainId ? { bridgeState: 'delivered' as const } : {}),
+      };
+    },
+
+    async executeMoneySend(_input, report) {
+      let txHash: `0x${string}` | null = null;
+      await ownerTransaction(report, () => {
+        txHash = hash(nonce - 1);
+      });
+      return { txHash };
+    },
+
+    async getMoneyReceiveInfo(_chainId, token) {
+      return {
+        address: ACCOUNT,
+        uri: `ethereum:${ACCOUNT}?token=${encodeURIComponent(token)}`,
+      };
     },
 
     async submitInstruction(_account, requestId, text, mandateId) {

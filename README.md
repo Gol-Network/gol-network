@@ -38,6 +38,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for trust boundaries, failure semantics, 
 | `contracts/`         | Foundry contracts, deployment script, behavior tests, invariant tests                     |
 | `packages/protocol/` | Shared ABI, Arc constants, exact USDC parsing, API types                                  |
 | `agent/`             | Durable PostgreSQL journal, strict model adapter, Privy signer, chain reconciliation, CLI |
+| `langgraph-agent/`   | Separate LangGraph server that streams AG-UI events and calls bounded Aave/GOL tools      |
 | `subgraph/`          | Factory template, account event mappings, GraphQL schema and queries                      |
 | `web/`               | One-page Next.js owner workflow and authenticated API routes                              |
 | `deploy/`            | Pinned Docker Compose stack, TLS proxy, migration, backup, restore, release scripts       |
@@ -46,7 +47,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for trust boundaries, failure semantics, 
 
 ## Local review
 
-Requirements: Node.js 22, pnpm 11.17.0, Foundry 1.5.1 or compatible, and Docker Compose for database integration.
+Requirements: Node.js 22, pnpm 11.17.0, Python 3.11+ with uv, Foundry 1.5.1 or compatible, and Docker Compose for database integration.
 
 ```bash
 pnpm install --frozen-lockfile
@@ -56,11 +57,25 @@ pnpm build
 (cd contracts && forge test)
 ```
 
-Start the labeled fixture walkthrough:
+Start the labeled fixture walkthrough. This launches both the web app and the separate LangGraph
+service:
 
 ```bash
-pnpm --filter @gol/web dev
+pnpm dev
 ```
+
+When `web/.env.local` contains live database and Arc settings, `pnpm dev` also starts the persistent
+payment worker. For separate logs, run `pnpm langgraph:dev`, `pnpm --filter @gol/agent worker`, and
+`pnpm --filter @gol/web dev` in separate terminals. The development services share the same local
+runtime configuration, so model and provider values only need to be entered once.
+
+The browser uses the official AG-UI client through `/api/agent/run`. Next.js validates and
+streams that request to the separate LangGraph service on `127.0.0.1:8124`. The service may read
+Aave data and prepare unsigned actions, but GOL account writes are returned as client handoffs to
+the existing owner-review and payment-journal flow; it receives no signing credentials.
+Prepared Aave transactions show their exact chain, sender, destination, native value and calldata.
+They reach the connected owner wallet only after explicit review, and that wallet must match the
+sender returned by Aave.
 
 Open `http://127.0.0.1:3000`. With no `PRIVY_APP_ID` and no `FACTORY_ADDRESS`, the page shows a persistent `FIXTURE MODE` banner and runs a mocked provider flow: the resumable owner checklist, a 40 USDC execution, a 70 USDC on-chain refusal, the `On-chain; indexing pending` transition, and a grounded answer with citations. Nothing touches a chain, a signer, or a paid model, and the results are never presented as provider evidence.
 
@@ -116,7 +131,7 @@ None of them print a token, private key, or provider error body.
 
 ## Production operations
 
-The production topology is Next.js, one persistent payment worker, private PostgreSQL, and Caddy on the existing `gol-production` host. Subgraph Studio remains external. The release script backs up first, drains workers, builds pinned images, applies an idempotent schema, activates services, and checks `/api/health`.
+The production topology is Next.js, a separate credential-free LangGraph/AG-UI service, one persistent payment worker, private PostgreSQL, and Caddy on the existing `gol-production` host. Subgraph Studio remains external. The release script backs up first, drains workers, builds pinned images, applies an idempotent schema, activates services, and checks `/api/health`.
 
 ```bash
 cp deploy/.env.example deploy/.env.production

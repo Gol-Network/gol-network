@@ -2,7 +2,13 @@ import type { PublicConfig } from '@/config';
 import type { AccountSnapshot, OwnerActionKind } from '@/client/types';
 
 export type StepId =
-  'authenticated' | 'owner_gas' | 'account' | 'agent_wallet' | 'agent_gas' | 'mandate';
+  | 'authenticated'
+  | 'owner_gas'
+  | 'account'
+  | 'agent_wallet'
+  | 'agent_gas'
+  | 'account_funded'
+  | 'mandate';
 
 export type StepStatus = 'complete' | 'current' | 'blocked' | 'todo';
 
@@ -30,13 +36,21 @@ export function deriveSteps(input: {
   const ownerGasReady =
     Boolean(balances) && BigInt(balances!.ownerGasWei) >= BigInt(config.minOwnerGasWei);
   const accountReady = Boolean(account?.accountAddress);
-  const agentReady = Boolean(account?.agentAddress);
-  // When the operator funds the shared agent gas reserve, the owner is never shown this step.
+  // An address alone is not enough: an older signer can still be stored while its policy requires
+  // migration. The API marks only the current, verified policy revision as linked.
+  const agentReady = Boolean(account?.linked && account.agentAddress);
   const agentGasReady =
-    config.agentGasManaged ||
-    (Boolean(balances) && BigInt(balances!.agentGasWei) >= BigInt(config.minAgentGasWei));
+    Boolean(balances) && BigInt(balances!.agentGasWei) >= BigInt(config.minAgentGasWei);
+  // A positive payment balance is enough to finish setup. The mandate limit is an authority cap,
+  // not a requirement to lock the full amount in advance.
+  const accountFunded =
+    Boolean(balances) &&
+    BigInt(balances!.accountUsdcUnits) + BigInt(account?.mandate?.spentUnits ?? '0') > 0n;
   const mandateReady =
-    Boolean(account) && account!.activeMandateId !== '0' && account!.mandate?.revoked === false;
+    Boolean(account?.agentAddress) &&
+    account!.activeMandateId !== '0' &&
+    account!.mandate?.revoked === false &&
+    account!.mandate.agent.toLowerCase() === account!.agentAddress!.toLowerCase();
 
   const definitions: Array<{
     id: StepId;
@@ -49,20 +63,20 @@ export function deriveSteps(input: {
   }> = [
     {
       id: 'authenticated',
-      title: 'Owner signed in on Arc testnet',
+      title: 'Wallet connected',
       detail: authenticated
-        ? 'The owner wallet is connected and every owner action is signed by it.'
-        : 'Sign in to connect the owner wallet.',
+        ? 'This is your personal wallet. You approve every account change here.'
+        : 'Connect the wallet you want to use with GOL.',
       complete: authenticated,
       action: null,
       actionLabel: null,
     },
     {
       id: 'owner_gas',
-      title: 'Owner gas available',
+      title: 'Add Arc network fees',
       detail: ownerGasReady
-        ? 'The owner wallet holds enough native Arc gas to sign.'
-        : 'GOL cannot fund an empty owner wallet. Use the Arc faucet before signing anything.',
+        ? 'Your wallet is ready to use Arc testnet.'
+        : 'Get test USDC from the Arc faucet, then check your balance again.',
       complete: ownerGasReady,
       blocked: authenticated && !ownerGasReady,
       action: null,
@@ -70,58 +84,76 @@ export function deriveSteps(input: {
     },
     {
       id: 'account',
-      title: 'GOL account created and confirmed',
+      title: 'Create a payment account',
       detail: accountReady
-        ? 'The factory recorded an account for this owner.'
-        : 'Create the account contract that will hold the payment balance.',
+        ? 'Your separate payment balance is ready.'
+        : 'This keeps payment funds separate from your personal wallet.',
       complete: accountReady,
       action: 'create_account',
-      actionLabel: 'Create GOL account',
+      actionLabel: 'Create payment account',
     },
     config.agentSignerProvider === 'aws_kms'
       ? {
           id: 'agent_wallet',
-          title: 'AWS KMS-backed agent address linked',
+          title: 'Choose who GOL can pay',
           detail: agentReady
-            ? 'The non-exportable KMS agent address is linked to this account.'
-            : 'Review the restricted agent signer, then link the KMS-backed agent address.',
+            ? 'GOL is connected to your payment funds.'
+            : 'Approve one recipient for agent payments.',
           complete: agentReady,
           action: 'provision_agent',
-          actionLabel: 'Review and link KMS agent',
+          actionLabel: 'Choose recipient',
         }
       : {
           id: 'agent_wallet',
-          title: 'Restricted agent wallet provisioned',
+          title: 'Choose who GOL can pay',
           detail: agentReady
-            ? 'A separate agent wallet exists with a default-deny signer policy.'
-            : 'Review the signer policy, then provision the separate agent wallet.',
+            ? 'The payment agent is ready.'
+            : 'Approve one recipient for agent payments.',
           complete: agentReady,
           action: 'provision_agent',
-          actionLabel: 'Review and provision agent wallet',
+          actionLabel: 'Choose recipient',
         },
-    ...(config.agentGasManaged
-      ? []
-      : [
-          {
-            id: 'agent_gas' as StepId,
-            title: 'Agent gas reserve funded and confirmed',
-            detail: agentGasReady
-              ? 'The agent wallet can pay gas for its own transactions.'
-              : 'Top up the agent gas reserve. This transfer sits outside the mandate budget.',
-            complete: agentGasReady,
-            action: 'fund_agent_gas' as OwnerActionKind,
-            actionLabel: 'Top up agent gas',
-          },
-        ]),
+    config.agentGasManaged
+      ? {
+          id: 'agent_gas',
+          title: 'Add agent network fees',
+          detail: agentGasReady
+            ? 'GOL can now submit payments on Arc.'
+            : 'The agent needs test USDC for Arc transaction fees.',
+          complete: agentGasReady,
+          blocked: agentReady && !agentGasReady,
+          action: null,
+          actionLabel: null,
+        }
+      : {
+          id: 'agent_gas',
+          title: 'Add agent network fees',
+          detail: agentGasReady
+            ? 'GOL can now submit payments on Arc.'
+            : 'Add 1 test USDC for Arc transaction fees. It cannot be used for payments.',
+          complete: agentGasReady,
+          action: 'fund_agent_gas',
+          actionLabel: 'Add 1 USDC fee reserve',
+        },
+    {
+      id: 'account_funded',
+      title: 'Add payment funds',
+      detail: accountFunded
+        ? 'GOL has USDC available for approved payments.'
+        : 'Choose how much USDC the agent may use. This is separate from the spending limit.',
+      complete: accountFunded,
+      action: 'fund_account',
+      actionLabel: 'Choose amount',
+    },
     {
       id: 'mandate',
-      title: 'Mandate reviewed, signed, and confirmed',
+      title: 'Set payment rules',
       detail: mandateReady
-        ? 'The active mandate authorises the agent within its caps.'
-        : 'Review the exact mandate values before signing.',
+        ? 'GOL can now pay within the rules you approved.'
+        : 'Choose the maximum for one payment and the total allowed for 7 days.',
       complete: mandateReady,
       action: 'sign_mandate',
-      actionLabel: 'Review mandate',
+      actionLabel: 'Set payment rules',
     },
   ];
 

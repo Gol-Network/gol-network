@@ -38,6 +38,29 @@ describe('HTTP authority boundary', () => {
     );
   });
 
+  it('allows only known loopback origins during local development', () => {
+    process.env.APP_ORIGIN = 'https://gol.test';
+    process.env = { ...process.env, NODE_ENV: 'development' };
+    expect(() =>
+      requireWriteOrigin(
+        new Request('http://localhost:3000/api/agent/setup', {
+          method: 'POST',
+          headers: { origin: 'http://localhost:3000' },
+        }),
+        { subject: 'owner', developer: false },
+      ),
+    ).not.toThrow();
+    expect(() =>
+      requireWriteOrigin(
+        new Request('http://localhost:3000/api/agent/setup', {
+          method: 'POST',
+          headers: { origin: 'http://localhost:3001' },
+        }),
+        { subject: 'owner', developer: false },
+      ),
+    ).toThrowError(HttpError);
+  });
+
   it('rejects a body larger than 16KB', async () => {
     const request = new Request('https://gol.test/api/instructions', {
       method: 'POST',

@@ -19,17 +19,24 @@ const TABS = [
 export function TabNav() {
   const pathname = usePathname() ?? '/';
   return (
-    <nav className="app-tabs" aria-label="Primary">
-      <div className="app-tabs-inner">
-        <span className="app-tabs-brand">GOL</span>
-        <div className="app-tabs-list">
+    <nav
+      className="sticky top-0 z-40 border-b border-border bg-background/90 backdrop-blur-sm"
+      aria-label="Primary"
+    >
+      <div className="mx-auto flex h-12 max-w-[1440px] items-center gap-5 px-5 sm:px-8 lg:px-[54px]">
+        <span className="text-xs font-extrabold tracking-[0.14em]">GOL</span>
+        <div className="flex gap-1">
           {TABS.map((tab) => {
             const selected = tab.match(pathname);
             return (
               <Link
                 key={tab.href}
                 href={tab.href}
-                className={selected ? 'app-tab selected' : 'app-tab'}
+                className={`rounded-full px-3 py-2 font-mono text-[10px] font-bold tracking-[0.1em] uppercase transition-colors ${
+                  selected
+                    ? 'bg-muted text-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
                 aria-current={selected ? 'page' : undefined}
               >
                 {tab.label}
@@ -37,7 +44,9 @@ export function TabNav() {
             );
           })}
         </div>
-        <span className="app-tabs-tag">HACKATHON BUILD</span>
+        <span className="ml-auto hidden font-mono text-[9px] tracking-[0.16em] text-primary sm:inline">
+          HACKATHON BUILD
+        </span>
       </div>
     </nav>
   );

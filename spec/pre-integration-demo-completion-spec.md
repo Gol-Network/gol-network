@@ -55,7 +55,7 @@ Not in scope during this phase:
 
 - The owner wallet and agent wallet remain distinct.
 - The backend never receives the owner wallet's signing key.
-- The backend signer may submit only `eth_sendTransaction` on Arc chain `5042002`, to the linked
+- The backend signer may submit only `eth_signTransaction` on Arc chain `5042002`, to the linked
   `GolAccount`, with zero native value. Other signer methods default to deny.
 - `GolAccount` remains the final authority for agent identity, recipient, per-payment cap, cumulative
   cap, expiry, revocation, and request replay.
@@ -94,7 +94,7 @@ The same production image must be configurable after it is built.
 
 - Implement one canonical policy builder used by provisioning code, the local policy assertion, and
   tests. Remove parallel policy descriptions that can drift.
-- The policy must allow only `eth_sendTransaction` when the transaction chain is `5042002`, `to` is
+- The policy must allow only `eth_signTransaction` when the transaction chain is `5042002`, `to` is
   the linked GOL account, and native `value` is zero. All unmatched methods and transactions are
   denied by Privy's default-deny behavior.
 - Name and display the policy accurately. Do not call it ABI-level `pay`-only unless an

@@ -48,7 +48,7 @@ export function TokenizedStocksApp() {
 
   if (!world) {
     return (
-      <main className="stocks-boot">
+      <main className="tokenized-stocks-page stocks-boot">
         <p className="eyebrow">TOKENIZED EQUITIES · BASE</p>
         <p>Preparing the mock market…</p>
       </main>
@@ -59,13 +59,7 @@ export function TokenizedStocksApp() {
 
 type View = { name: 'list' } | { name: 'detail'; symbol: string };
 
-function TokenizedStocksExperience({
-  world,
-  onReset,
-}: {
-  world: MockWorld;
-  onReset: () => void;
-}) {
+function TokenizedStocksExperience({ world, onReset }: { world: MockWorld; onReset: () => void }) {
   const tokens = world.tokens;
   const [portfolio, setPortfolio] = useState<Portfolio>(world.portfolio);
   const [mandate, setMandate] = useState<BaseMandate | null>(null);
@@ -226,7 +220,11 @@ function TokenizedStocksExperience({
       setCumulativeSpentUsd(0);
       setMandateDraft(null);
       setMandateBusy(false);
-      setMandateTx({ phase: 'confirmed', hash, text: 'The agent desk can now trade within its caps.' });
+      setMandateTx({
+        phase: 'confirmed',
+        hash,
+        text: 'The agent desk can now trade within its caps.',
+      });
     }, 600);
   }, [mandateDraft]);
 
@@ -246,7 +244,7 @@ function TokenizedStocksExperience({
           : 'Not set';
 
   return (
-    <main id="top">
+    <main id="top" className="tokenized-stocks-page">
       <header className="topbar">
         <a className="brand" href="#top">
           <span className="brand-mark">G</span>

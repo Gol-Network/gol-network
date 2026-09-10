@@ -7,6 +7,9 @@ node_modules/
 coverage/
 dist/
 .next/
+.next-e2e/
+.next-computer-e2e/
+.next-build/
 playwright-report/
 test-results/
 *.tsbuildinfo
@@ -21,3 +24,7 @@ subgraph/tests/.latest.json
 subgraph/tests/.bin/
 *.log
 .DS_Store
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/

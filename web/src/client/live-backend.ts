@@ -17,6 +17,7 @@ import {
   revokeMandate,
   transferUsdc,
   withdraw,
+  sendPreparedTransaction,
   type OwnerProvider,
 } from '@/wallet/owner-actions';
 import type {
@@ -26,10 +27,13 @@ import type {
   RequestSnapshot,
   TransactionReporter,
 } from './types';
+import type { PreparedAaveTransaction } from './aave-transactions';
+import { createBotanaryMoneyClient } from './botanary-money';
 
 export interface LiveBackendDependencies {
   config: PublicConfig;
   authedFetch: (path: string, init?: RequestInit) => Promise<Record<string, unknown>>;
+  getAccessToken: () => Promise<string | null>;
   ownerAddress: () => Address | null;
   ownerProvider: () => Promise<OwnerProvider>;
 }
@@ -37,7 +41,8 @@ export interface LiveBackendDependencies {
 const ZERO = '0x0000000000000000000000000000000000000000';
 
 export function createLiveBackend(dependencies: LiveBackendDependencies): GolBackend {
-  const { config, authedFetch, ownerAddress, ownerProvider } = dependencies;
+  const { config, authedFetch, getAccessToken, ownerAddress, ownerProvider } = dependencies;
+  const money = createBotanaryMoneyClient({ getAccessToken, ownerProvider });
 
   async function unlinkedSnapshot(owner: Address): Promise<AccountSnapshot> {
     // Completed owner steps are derived from the chain, never from browser storage.
@@ -86,18 +91,17 @@ export function createLiveBackend(dependencies: LiveBackendDependencies): GolBac
     async loadAccount() {
       const owner = ownerAddress();
       if (!owner) return null;
-      const value = await authedFetch('/api/account');
+      const value = await authedFetch(`/api/account?owner=${encodeURIComponent(owner)}`);
       if (value.state !== 'ready') return unlinkedSnapshot(owner);
       const balances = value.balances as Record<string, string>;
+      const agentControl = value.agentControl as Record<string, unknown>;
       return {
         ownerAddress: addressSchema.parse(value.ownerAddress),
         accountAddress: addressSchema.parse(value.accountAddress),
         agentAddress: addressSchema.parse(value.agentAddress),
-        linked: true,
+        linked: agentControl.status === 'configured',
         policyId: String((value.agentControl as Record<string, unknown>)?.policyId ?? ''),
-        policyDisclosure:
-          ((value.agentControl as Record<string, unknown>)
-            ?.disclosure as AccountSnapshot['policyDisclosure']) ?? null,
+        policyDisclosure: (agentControl.disclosure as AccountSnapshot['policyDisclosure']) ?? null,
         recipients: (value.recipients as AccountSnapshot['recipients']) ?? [],
         balances: {
           ownerUsdcUnits: balances?.ownerUsdcUnits ?? '0',
@@ -165,6 +169,19 @@ export function createLiveBackend(dependencies: LiveBackendDependencies): GolBac
     async withdraw(account: Address, units: bigint, report: TransactionReporter) {
       await withdraw(await ownerProvider(), config, account, units, report);
     },
+
+    async executeAaveTransaction(
+      transaction: PreparedAaveTransaction,
+      report: TransactionReporter,
+    ) {
+      await sendPreparedTransaction(await ownerProvider(), transaction, report);
+    },
+
+    listMoneyTokens: money.tokens,
+    quoteMoneySwap: money.quote,
+    executeMoneySwap: money.swap,
+    executeMoneySend: money.send,
+    getMoneyReceiveInfo: money.receive,
 
     async submitInstruction(account: Address, requestId: string, text: string, mandateId: string) {
       await authedFetch('/api/instructions', {
