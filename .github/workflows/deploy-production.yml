@@ -5,93 +5,29 @@ on:
     workflows: [ci]
     types: [completed]
     branches: [main]
-  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: gol-production
+  group: gol-production-release
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  release:
     if: >-
       vars.PRODUCTION_DEPLOY_ENABLED == 'true' &&
-      (github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_repository.full_name == github.repository))
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-24.04
     environment: production
-    timeout-minutes: 45
-    env:
-      PRODUCTION_HOST: 16.76.174.242
-      PRODUCTION_USER: ec2-user
-      PUBLIC_HEALTH_URL: https://gol.network/api/health
+    timeout-minutes: 5
     steps:
-      - name: Resolve release commit
+      - name: Publish CI-approved production commit
         shell: bash
+        env:
+          RELEASE_COMMIT: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
-          if [[ "${{ github.event_name }}" == 'workflow_run' ]]; then
-            release_commit="${{ github.event.workflow_run.head_sha }}"
-          else
-            release_commit="${{ github.sha }}"
-          fi
-          [[ "$release_commit" =~ ^[0-9a-f]{40}$ ]]
-          echo "RELEASE_COMMIT=$release_commit" >> "$GITHUB_ENV"
-
-      - name: Deploy through SSH
-        shell: bash
-        run: |
-          set -euo pipefail
-          umask 077
-          ssh_dir="$RUNNER_TEMP/gol-production-ssh"
-          install -d -m 0700 "$ssh_dir"
-          printf '%s\n' '${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}' > "$ssh_dir/id"
-          printf '%s\n' '${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}' > "$ssh_dir/known_hosts"
-          test -s "$ssh_dir/id"
-          test -s "$ssh_dir/known_hosts"
-          ssh-keygen -y -f "$ssh_dir/id" >/dev/null
-          ssh-keygen -l -f "$ssh_dir/known_hosts" >/dev/null
-
-          ssh_args=(
-            -i "$ssh_dir/id"
-            -o BatchMode=yes
-            -o IdentitiesOnly=yes
-            -o StrictHostKeyChecking=yes
-            -o "UserKnownHostsFile=$ssh_dir/known_hosts"
-            -o ConnectTimeout=15
-            -o ServerAliveInterval=15
-            -o ServerAliveCountMax=20
-          )
-          ssh "${ssh_args[@]}" "$PRODUCTION_USER@$PRODUCTION_HOST" \
-            bash -s -- "$RELEASE_COMMIT" <<'REMOTE'
-          set -euo pipefail
-          release_commit="$1"
-          repo_dir=/opt/gol-network
-          [[ "$release_commit" =~ ^[0-9a-f]{40}$ ]]
-          test -d "$repo_dir/.git"
-          sudo -n true
-          test "$(sudo stat -c %a "$repo_dir/deploy/.env.production")" = '600'
-          test -z "$(sudo git -C "$repo_dir" status --porcelain)"
-          sudo git -C "$repo_dir" fetch --force --prune origin main
-          sudo git -C "$repo_dir" cat-file -e "$release_commit^{commit}"
-          sudo git -C "$repo_dir" merge-base --is-ancestor "$release_commit" FETCH_HEAD
-          sudo git -C "$repo_dir" checkout --detach "$release_commit"
-          sudo env \
-            GOL_REPO_DIR="$repo_dir" \
-            GOL_BACKUP_BUCKET=gol-production-779035457064-ap-northeast-1 \
-            GOL_BACKUP_KMS_KEY_ID=alias/gol-backups \
-            bash "$repo_dir/deploy/remote-release.sh" "$release_commit"
-          REMOTE
-
-      - name: Verify public release
-        shell: bash
-        run: |
-          set -euo pipefail
-          health="$(curl --fail --show-error --silent --retry 12 --retry-all-errors \
-            --retry-delay 5 "$PUBLIC_HEALTH_URL")"
-          test "$(jq -r '.ready' <<< "$health")" = 'true'
-          test "$(jq -r '.sourceCommit' <<< "$health")" = "$RELEASE_COMMIT"
-          jq '{ready, sourceCommit, components}' <<< "$health"
+          [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          echo "Production release approved for $RELEASE_COMMIT"
