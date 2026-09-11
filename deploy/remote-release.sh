@@ -2,7 +2,7 @@
 set -euo pipefail
 
 release_commit="${1:-}"
-repo_dir="${GOL_REPO_DIR:-/opt/gol}"
+repo_dir="${GOL_REPO_DIR:-/opt/gol-network}"
 
 if [[ ! "$release_commit" =~ ^[0-9a-f]{40}$ ]]; then
   echo 'a full lowercase release commit is required' >&2
