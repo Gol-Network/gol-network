@@ -40,7 +40,9 @@ test.describe('tokenized stocks (Base hackathon mock)', () => {
 
     // The desk cannot trade until a mandate is active.
     await expect(page.getByRole('button', { name: 'Preview trade' })).toBeDisabled();
-    await expect(page.getByText('Create an active Base mandate before the desk can trade.')).toBeVisible();
+    await expect(
+      page.getByText('Create an active Base mandate before the desk can trade.'),
+    ).toBeVisible();
 
     // Create the Base mandate.
     await page.getByRole('button', { name: 'Create mandate on Base' }).click();

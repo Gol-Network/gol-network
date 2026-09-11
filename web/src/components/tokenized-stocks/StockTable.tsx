@@ -84,7 +84,9 @@ export function StockTable({ tokens, positions, onOpen }: StockTableProps) {
           </tbody>
         </table>
       </div>
-      <p className="hint">Mock quotes, regenerated on reload. Select a row for the token detail view.</p>
+      <p className="hint">
+        Mock quotes, regenerated on reload. Select a row for the token detail view.
+      </p>
     </article>
   );
 }

@@ -64,16 +64,76 @@ interface Catalog {
 }
 
 const CATALOG: Catalog[] = [
-  { symbol: 'AAPLx', name: 'Tokenized Apple', underlying: 'AAPL · Apple Inc.', basePrice: 229, supply: 5_400_000 },
-  { symbol: 'NVDAx', name: 'Tokenized NVIDIA', underlying: 'NVDA · NVIDIA Corp.', basePrice: 122, supply: 9_100_000 },
-  { symbol: 'TSLAx', name: 'Tokenized Tesla', underlying: 'TSLA · Tesla Inc.', basePrice: 247, supply: 4_200_000 },
-  { symbol: 'MSFTx', name: 'Tokenized Microsoft', underlying: 'MSFT · Microsoft Corp.', basePrice: 421, supply: 3_050_000 },
-  { symbol: 'GOOGLx', name: 'Tokenized Alphabet', underlying: 'GOOGL · Alphabet Inc.', basePrice: 168, supply: 3_700_000 },
-  { symbol: 'AMZNx', name: 'Tokenized Amazon', underlying: 'AMZN · Amazon.com Inc.', basePrice: 186, supply: 3_400_000 },
-  { symbol: 'METAx', name: 'Tokenized Meta', underlying: 'META · Meta Platforms Inc.', basePrice: 563, supply: 1_450_000 },
-  { symbol: 'COINx', name: 'Tokenized Coinbase', underlying: 'COIN · Coinbase Global Inc.', basePrice: 232, supply: 980_000 },
-  { symbol: 'MSTRx', name: 'Tokenized Strategy', underlying: 'MSTR · Strategy Inc.', basePrice: 178, supply: 1_120_000 },
-  { symbol: 'SPYx', name: 'Tokenized S&P 500', underlying: 'SPY · SPDR S&P 500 ETF', basePrice: 566, supply: 2_600_000 },
+  {
+    symbol: 'AAPLx',
+    name: 'Tokenized Apple',
+    underlying: 'AAPL · Apple Inc.',
+    basePrice: 229,
+    supply: 5_400_000,
+  },
+  {
+    symbol: 'NVDAx',
+    name: 'Tokenized NVIDIA',
+    underlying: 'NVDA · NVIDIA Corp.',
+    basePrice: 122,
+    supply: 9_100_000,
+  },
+  {
+    symbol: 'TSLAx',
+    name: 'Tokenized Tesla',
+    underlying: 'TSLA · Tesla Inc.',
+    basePrice: 247,
+    supply: 4_200_000,
+  },
+  {
+    symbol: 'MSFTx',
+    name: 'Tokenized Microsoft',
+    underlying: 'MSFT · Microsoft Corp.',
+    basePrice: 421,
+    supply: 3_050_000,
+  },
+  {
+    symbol: 'GOOGLx',
+    name: 'Tokenized Alphabet',
+    underlying: 'GOOGL · Alphabet Inc.',
+    basePrice: 168,
+    supply: 3_700_000,
+  },
+  {
+    symbol: 'AMZNx',
+    name: 'Tokenized Amazon',
+    underlying: 'AMZN · Amazon.com Inc.',
+    basePrice: 186,
+    supply: 3_400_000,
+  },
+  {
+    symbol: 'METAx',
+    name: 'Tokenized Meta',
+    underlying: 'META · Meta Platforms Inc.',
+    basePrice: 563,
+    supply: 1_450_000,
+  },
+  {
+    symbol: 'COINx',
+    name: 'Tokenized Coinbase',
+    underlying: 'COIN · Coinbase Global Inc.',
+    basePrice: 232,
+    supply: 980_000,
+  },
+  {
+    symbol: 'MSTRx',
+    name: 'Tokenized Strategy',
+    underlying: 'MSTR · Strategy Inc.',
+    basePrice: 178,
+    supply: 1_120_000,
+  },
+  {
+    symbol: 'SPYx',
+    name: 'Tokenized S&P 500',
+    underlying: 'SPY · SPDR S&P 500 ETF',
+    basePrice: 566,
+    supply: 2_600_000,
+  },
 ];
 
 const HISTORY_DAYS = 90;

@@ -1,0 +1,130 @@
+name: deploy-production
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gol-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      vars.PRODUCTION_DEPLOY_ENABLED == 'true' &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository))
+    runs-on: ubuntu-24.04
+    environment: production
+    timeout-minutes: 45
+    env:
+      AWS_REGION: ap-northeast-1
+      AWS_ACCOUNT_ID: '779035457064'
+      INSTANCE_ID: i-0551fb8ae101f65d0
+      PUBLIC_HEALTH_URL: https://gol.network/api/health
+    steps:
+      - name: Resolve release commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == 'workflow_run' ]]; then
+            release_commit="${{ github.event.workflow_run.head_sha }}"
+          else
+            release_commit="${{ github.sha }}"
+          fi
+          [[ "$release_commit" =~ ^[0-9a-f]{40}$ ]]
+          echo "RELEASE_COMMIT=$release_commit" >> "$GITHUB_ENV"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+
+      - name: Verify production target
+        shell: bash
+        run: |
+          set -euo pipefail
+          account_id="$(aws sts get-caller-identity --query Account --output text)"
+          test "$account_id" = "$AWS_ACCOUNT_ID"
+          state="$(aws ec2 describe-instances \
+            --instance-ids "$INSTANCE_ID" \
+            --query 'Reservations[0].Instances[0].State.Name' \
+            --output text)"
+          test "$state" = 'running'
+          ping="$(aws ssm describe-instance-information \
+            --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
+            --query 'InstanceInformationList[0].PingStatus' \
+            --output text)"
+          test "$ping" = 'Online'
+
+      - name: Deploy through SSM
+        id: deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The single-quoted lines intentionally expand later on the remote host.
+          # shellcheck disable=SC2016
+          remote_command="$(printf '%s\n' \
+            'set -euo pipefail' \
+            'repo_dir=/opt/gol' \
+            "release_commit=$RELEASE_COMMIT" \
+            'test -d "$repo_dir/.git"' \
+            'repo_owner="$(stat -c %U "$repo_dir")"' \
+            'test -z "$(sudo -u "$repo_owner" git -C "$repo_dir" status --porcelain --untracked-files=no)"' \
+            'sudo -u "$repo_owner" git -C "$repo_dir" fetch --force --prune origin main' \
+            'sudo -u "$repo_owner" git -C "$repo_dir" cat-file -e "$release_commit^{commit}"' \
+            'sudo -u "$repo_owner" git -C "$repo_dir" merge-base --is-ancestor "$release_commit" FETCH_HEAD' \
+            'sudo -u "$repo_owner" git -C "$repo_dir" checkout --detach "$release_commit"' \
+            'sudo -u "$repo_owner" env GOL_REPO_DIR="$repo_dir" GOL_BACKUP_BUCKET=gol-production-779035457064-ap-northeast-1 GOL_BACKUP_KMS_KEY_ID=alias/gol-backups bash "$repo_dir/deploy/remote-release.sh" "$release_commit"')"
+          parameters="$(jq -nc --arg command "$remote_command" '{commands: [$command]}')"
+          command_id="$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name AWS-RunShellScript \
+            --comment "Deploy GOL $RELEASE_COMMIT" \
+            --parameters "$parameters" \
+            --query 'Command.CommandId' \
+            --output text)"
+          echo "command_id=$command_id" >> "$GITHUB_OUTPUT"
+
+          if ! aws ssm wait command-executed \
+              --command-id "$command_id" \
+              --instance-id "$INSTANCE_ID"; then
+            aws ssm get-command-invocation \
+              --command-id "$command_id" \
+              --instance-id "$INSTANCE_ID" \
+              --query '[Status,StandardOutputContent,StandardErrorContent]' \
+              --output text
+            exit 1
+          fi
+
+          status="$(aws ssm get-command-invocation \
+            --command-id "$command_id" \
+            --instance-id "$INSTANCE_ID" \
+            --query Status \
+            --output text)"
+          aws ssm get-command-invocation \
+            --command-id "$command_id" \
+            --instance-id "$INSTANCE_ID" \
+            --query '[StandardOutputContent,StandardErrorContent]' \
+            --output text
+          test "$status" = 'Success'
+
+      - name: Verify public release
+        shell: bash
+        run: |
+          set -euo pipefail
+          health="$(curl --fail --show-error --silent --retry 12 --retry-all-errors \
+            --retry-delay 5 "$PUBLIC_HEALTH_URL")"
+          test "$(jq -r '.ready' <<< "$health")" = 'true'
+          test "$(jq -r '.sourceCommit' <<< "$health")" = "$RELEASE_COMMIT"
+          jq '{ready, sourceCommit, components}' <<< "$health"

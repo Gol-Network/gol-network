@@ -220,7 +220,11 @@ export function TradeConsole({
         </div>
       )}
 
-      <div className={`run-state trade-state ${status.tone}`} role="status" data-testid="trade-status">
+      <div
+        className={`run-state trade-state ${status.tone}`}
+        role="status"
+        data-testid="trade-status"
+      >
         <i />
         <div>
           <strong>{status.text}</strong>
@@ -383,7 +387,14 @@ interface MandateDraftFormProps {
   onSign: () => void;
 }
 
-function MandateDraftForm({ draft, tokens, busy, onChange, onCancel, onSign }: MandateDraftFormProps) {
+function MandateDraftForm({
+  draft,
+  tokens,
+  busy,
+  onChange,
+  onCancel,
+  onSign,
+}: MandateDraftFormProps) {
   const [perTrade, setPerTrade] = useState(String(draft.perTradeCapUsd));
   const [cumulative, setCumulative] = useState(String(draft.cumulativeCapUsd));
   const [error, setError] = useState<string | null>(null);
@@ -393,7 +404,12 @@ function MandateDraftForm({ draft, tokens, busy, onChange, onCancel, onSign }: M
     setCumulative(nextCumulative);
     const perTradeUsd = Number(nextPerTrade.replace(/,/g, ''));
     const cumulativeUsd = Number(nextCumulative.replace(/,/g, ''));
-    if (!Number.isFinite(perTradeUsd) || !Number.isFinite(cumulativeUsd) || perTradeUsd <= 0 || cumulativeUsd <= 0) {
+    if (
+      !Number.isFinite(perTradeUsd) ||
+      !Number.isFinite(cumulativeUsd) ||
+      perTradeUsd <= 0 ||
+      cumulativeUsd <= 0
+    ) {
       setError('Use positive USDC amounts.');
       return;
     }

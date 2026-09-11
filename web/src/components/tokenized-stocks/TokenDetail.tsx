@@ -30,7 +30,8 @@ export function TokenDetail({ token, position, onBack, onTrade }: TokenDetailPro
 
   const positionValue = position ? position.shares * token.price : 0;
   const positionPnl = position ? positionValue - position.costUsd : 0;
-  const positionPnlPct = position && position.costUsd > 0 ? (positionPnl / position.costUsd) * 100 : 0;
+  const positionPnlPct =
+    position && position.costUsd > 0 ? (positionPnl / position.costUsd) * 100 : 0;
 
   return (
     <article className="panel token-detail" data-testid="token-detail">
@@ -45,7 +46,9 @@ export function TokenDetail({ token, position, onBack, onTrade }: TokenDetailPro
             {token.symbol} · {token.name}
           </h2>
         </div>
-        <span className={`status ${rising ? 'active' : 'refused'}`}>{pct(token.change24hPct)} 24h</span>
+        <span className={`status ${rising ? 'active' : 'refused'}`}>
+          {pct(token.change24hPct)} 24h
+        </span>
       </div>
 
       <div className="detail-price">

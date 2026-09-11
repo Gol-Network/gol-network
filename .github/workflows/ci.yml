@@ -31,7 +31,13 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          python-version: '3.13'
+          enable-cache: true
       - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
         env:
@@ -47,7 +53,7 @@ jobs:
       - uses: foundry-rs/foundry-toolchain@v1
         with: { version: v1.5.1 }
       - run: forge test --root contracts -vvv
-      - run: forge test --root contracts --match-contract GolAccountInvariantTest --runs 128 --depth 64
+      - run: forge test --root contracts --match-contract GolAccountInvariantTest -vvv
 
   arm64-image:
     runs-on: ubuntu-24.04

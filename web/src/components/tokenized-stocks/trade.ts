@@ -15,8 +15,7 @@ export interface TradeIntent {
 }
 
 export type TradeParse =
-  | { kind: 'trade'; intent: TradeIntent }
-  | { kind: 'clarification'; message: string };
+  { kind: 'trade'; intent: TradeIntent } | { kind: 'clarification'; message: string };
 
 export type TradeRule =
   | 'NONE'
@@ -46,7 +45,10 @@ function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
 }
 
-export function parseTrade(text: string, tokens: Pick<StockToken, 'symbol' | 'name'>[]): TradeParse {
+export function parseTrade(
+  text: string,
+  tokens: Pick<StockToken, 'symbol' | 'name'>[],
+): TradeParse {
   const input = text.trim();
   if (input.length === 0 || input.length > MAX_INSTRUCTION_LENGTH) {
     return { kind: 'clarification', message: 'Enter one trade instruction under 400 characters.' };
@@ -85,10 +87,7 @@ export function parseTrade(text: string, tokens: Pick<StockToken, 'symbol' | 'na
   return { kind: 'trade', intent: { side, amountUsd: round2(amountUsd), symbol } };
 }
 
-function matchSymbol(
-  input: string,
-  tokens: Pick<StockToken, 'symbol' | 'name'>[],
-): string | null {
+function matchSymbol(input: string, tokens: Pick<StockToken, 'symbol' | 'name'>[]): string | null {
   const haystack = input.toLowerCase();
   const bySymbol = tokens.filter((token) =>
     new RegExp(`\\b${escapeRegExp(token.symbol.toLowerCase())}\\b`).test(haystack),
@@ -162,7 +161,11 @@ export function evaluateTrade(args: EvaluateArgs): TradeEvaluation {
     );
   }
   if (intent.side === 'buy' && intent.amountUsd > portfolio.cashUsd) {
-    return refuse('INSUFFICIENT_CASH', `Only ${money(portfolio.cashUsd)} cash is available.`, capRoom);
+    return refuse(
+      'INSUFFICIENT_CASH',
+      `Only ${money(portfolio.cashUsd)} cash is available.`,
+      capRoom,
+    );
   }
   if (intent.side === 'sell') {
     const held = portfolio.positions[intent.symbol];

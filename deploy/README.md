@@ -56,6 +56,24 @@ export GOL_BACKUP_KMS_KEY_ID=alias/gol-backups
 
 The script requires a clean source tree, or an explicit `ALLOW_DIRTY_TREE=1` that records the intentional source commit. It then validates required runtime configuration, stops new worker claims, waits up to 45 seconds, creates an encrypted off-host backup, builds the pinned LangGraph and Node images, applies the idempotent schema before any traffic, activates services, and requires the internal health endpoint to return 200. `RELEASE_COMMIT` is passed into the running services as `GOL_SOURCE_COMMIT`, so `/api/health` and the acceptance runner report the deployed commit. Rollback means checking out a prior compatible commit and rerunning with its exact hash. Never delete `postgres_data` during rollback.
 
+### GitHub Actions deployment
+
+The `deploy-production` workflow runs only after the `ci` workflow succeeds on `main`, or by an
+explicit manual dispatch. It verifies the exact AWS account, instance ID, running state, and SSM
+status before using Run Command to update `/opt/gol` to the tested commit. The host then runs
+`remote-release.sh`, which serializes releases, preserves the host-only `.env.production`, takes the
+normal encrypted pre-deploy backup, migrates, activates the stack, and checks health. The workflow
+finally requires the public health response to be ready and to report the same full source commit.
+
+Create a protected GitHub Environment named `production` with the secrets `AWS_ACCESS_KEY_ID` and
+`AWS_SECRET_ACCESS_KEY`. Use a dedicated deploy principal whose permissions are limited to
+`github-actions-ssm-policy.json`; do not place these credentials in `.env.production` or a container.
+Set the repository variable `PRODUCTION_DEPLOY_ENABLED=true` only after those credentials can pass
+the target and SSM preflight; an absent or different value keeps production deployment disabled.
+The repository is public, so the production host does not need a GitHub PAT to fetch a release.
+Before enabling the workflow, confirm `/opt/gol/deploy/.env.production` is mode `0600` and includes
+every current field, including `GOL_AGENT_SHARED_SECRET`.
+
 ## Backup and restore drill
 
 Schedule `backup-db.sh daily` with a host systemd timer. Configure an S3 lifecycle rule that retains at least seven daily objects and prevents public access. Test a backup without touching `gol`:
