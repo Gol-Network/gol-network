@@ -28,14 +28,25 @@ export function PriceChart({ values, variant = 'full' }: PriceChartProps) {
         preserveAspectRatio="none"
         aria-hidden="true"
       >
-        <path d={geometry.line} fill="none" stroke={stroke} strokeWidth={3} vectorEffect="non-scaling-stroke" />
+        <path
+          d={geometry.line}
+          fill="none"
+          stroke={stroke}
+          strokeWidth={3}
+          vectorEffect="non-scaling-stroke"
+        />
       </svg>
     );
   }
 
   return (
     <figure className="price-chart">
-      <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} preserveAspectRatio="none" role="img" aria-label="Price history">
+      <svg
+        viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+        preserveAspectRatio="none"
+        role="img"
+        aria-label="Price history"
+      >
         <defs>
           <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={stroke} stopOpacity={0.22} />
@@ -52,7 +63,13 @@ export function PriceChart({ values, variant = 'full' }: PriceChartProps) {
           strokeLinejoin="round"
           strokeLinecap="round"
         />
-        <circle cx={geometry.lastPoint.x} cy={geometry.lastPoint.y} r={2.4} fill={stroke} vectorEffect="non-scaling-stroke" />
+        <circle
+          cx={geometry.lastPoint.x}
+          cy={geometry.lastPoint.y}
+          r={2.4}
+          fill={stroke}
+          vectorEffect="non-scaling-stroke"
+        />
       </svg>
       <figcaption>
         <span>{usd(geometry.min)}</span>
