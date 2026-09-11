@@ -84,4 +84,23 @@ describe('setup step derivation', () => {
       action: null,
     });
   });
+
+  it('presents funds and rules as one payment budget setup', () => {
+    const account = snapshot(true);
+    account.balances.agentGasWei = '1';
+    account.balances.accountUsdcUnits = '0';
+    account.activeMandateId = '0';
+    account.mandate = null;
+
+    expect(
+      deriveSteps({ config, authenticated: true, account }).find(
+        (step) => step.id === 'account_funded',
+      ),
+    ).toMatchObject({
+      title: 'Set your payment budget',
+      action: 'fund_account',
+      actionLabel: 'Set payment budget',
+      status: 'current',
+    });
+  });
 });

@@ -76,6 +76,34 @@ test.describe('mocked provider walkthrough', () => {
     await expect(drawer.getByRole('button', { name: 'Copy payment request' })).toBeEnabled();
   });
 
+  test('keeps the combined payment budget usable on a light mobile viewport', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 800 });
+    await page.addInitScript(() => window.localStorage.setItem('gol-theme', 'light'));
+    await page.goto('/app');
+    await page.getByRole('button', { name: 'Open fixture demo', exact: true }).click();
+
+    await completeStep(page, /^Create payment account/);
+    await page.getByRole('button', { name: /Choose recipient/ }).click();
+    await page.getByLabel('Recipient wallet address').fill(RECIPIENT);
+    await page.getByRole('button', { name: /Create payment agent/ }).click();
+    await page.getByRole('button', { name: /^Add 1 USDC fee reserve/ }).click();
+    await completeStep(page, /^Continue to wallet/);
+    await page.getByRole('button', { name: /^Set payment budget/ }).click();
+
+    const budget = page.getByTestId('payment-budget');
+    await expect(budget).toBeVisible(CONFIRMATION);
+    await expect(page.locator('main')).toHaveClass(/theme-light/);
+    await budget.getByLabel('Maximum per payment').fill('101');
+    await budget.getByLabel('Total allowed for 7 days').fill('100');
+    await budget.getByRole('button', { name: /^Continue to wallet/ }).click();
+    await expect(budget).toContainText('cannot exceed the 7-day total');
+
+    const box = await budget.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(320);
+  });
+
   test('completes setup, executes 10, records a 101 refusal, indexes both, and cites them', async ({
     page,
   }) => {
@@ -119,8 +147,8 @@ test.describe('mocked provider walkthrough', () => {
     // 5. Privy signers use an owner-funded gas reserve. KMS deployments use the operator-funded
     // reserve and therefore proceed directly to account funding.
     const addAgentFees = page.getByRole('button', { name: /^Add 1 USDC fee reserve/ });
-    const chooseDeposit = page.getByRole('button', { name: /^Choose amount/ });
-    await expect(addAgentFees.or(chooseDeposit)).toBeVisible(CONFIRMATION);
+    const setPaymentBudget = page.getByRole('button', { name: /^Set payment budget/ });
+    await expect(addAgentFees.or(setPaymentBudget)).toBeVisible(CONFIRMATION);
     if (await addAgentFees.isVisible()) {
       await addAgentFees.click();
       const gasReview = page.getByTestId('transfer-review');
@@ -128,22 +156,17 @@ test.describe('mocked provider walkthrough', () => {
       await expect(gasReview).toContainText('cannot be used for payments');
       await completeStep(page, /^Continue to wallet/);
     }
-    await expect(chooseDeposit).toBeEnabled(CONFIRMATION);
+    await expect(setPaymentBudget).toBeEnabled(CONFIRMATION);
 
-    // 6. The owner chooses the initial payment balance independently of the spending limit.
-    await chooseDeposit.click();
-    await page.getByLabel('Amount (USDC)').fill('20');
-    await page.getByRole('button', { name: /^Review transfer/ }).click();
-    await expect(page.getByTestId('transfer-review')).toContainText('20 USDC');
-    await completeStep(page, /^Continue to wallet/);
-
-    // 7. The mandate is the final authority review before the agent workspace unlocks.
-    await page.getByRole('button', { name: /^Set payment rules/ }).click();
-    const review = page.getByTestId('mandate-review');
-    await expect(review).toContainText('0xbEef00...0004');
-    await review.getByLabel('Per-payment cap (USDC)').fill('90');
-    await review.getByLabel('Total spending limit (USDC)').fill('100');
-    await page.getByRole('button', { name: /^Save payment rules/ }).click();
+    // 6. One budget review collects the payment balance and mandate limits. The wallet still
+    // receives two explicit requests: one transfer and one mandate signature.
+    await setPaymentBudget.click();
+    const budget = page.getByTestId('payment-budget');
+    await expect(budget).toContainText('0xbEef00...0004');
+    await budget.getByLabel('Payment funds').fill('20');
+    await budget.getByLabel('Maximum per payment').fill('90');
+    await budget.getByLabel('Total allowed for 7 days').fill('100');
+    await budget.getByRole('button', { name: /^Continue to wallet/ }).click();
     await expect(page.getByText('On', { exact: true }).first()).toBeVisible(CONFIRMATION);
 
     // Withdrawals also accept an owner-selected amount and return only to the owner wallet.

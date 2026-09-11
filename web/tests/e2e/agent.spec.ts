@@ -17,20 +17,14 @@ async function completeFixtureSetup(page: Page) {
 
   await page.getByRole('button', { name: /^Add 1 USDC fee reserve/ }).click();
   await page.getByRole('button', { name: /^Continue to wallet/ }).click();
-  await expect(page.getByRole('heading', { name: 'Add payment funds' })).toBeVisible({
+  await expect(page.getByRole('heading', { name: 'Set your payment budget' })).toBeVisible({
     timeout: 30_000,
   });
 
-  await page.getByRole('button', { name: /^Choose amount/ }).click();
-  await page.getByLabel('Amount (USDC)').fill('20');
-  await page.getByRole('button', { name: /^Review transfer/ }).click();
+  await page.getByRole('button', { name: /^Set payment budget/ }).click();
+  const budget = page.getByTestId('payment-budget');
+  await budget.getByLabel('Payment funds').fill('20');
   await page.getByRole('button', { name: /^Continue to wallet/ }).click();
-  await expect(page.getByRole('heading', { name: 'Set payment rules' })).toBeVisible({
-    timeout: 30_000,
-  });
-
-  await page.getByRole('button', { name: /^Set payment rules/ }).click();
-  await page.getByRole('button', { name: /^Save payment rules/ }).click();
   await expect(page.getByRole('heading', { name: 'GOL Agent' })).toBeVisible({ timeout: 30_000 });
 }
 

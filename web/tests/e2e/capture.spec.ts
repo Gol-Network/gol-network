@@ -23,12 +23,9 @@ test('capture labeled fixture states', async ({ page }) => {
   await page.getByRole('button', { name: /Create payment agent/ }).click();
   await page.getByRole('button', { name: /^Add 1 USDC fee reserve/ }).click();
   await page.getByRole('button', { name: /^Continue to wallet/ }).click();
-  await page.getByRole('button', { name: /^Choose amount/ }).click();
-  await page.getByLabel('Amount (USDC)').fill('20');
-  await page.getByRole('button', { name: /^Review transfer/ }).click();
+  await page.getByRole('button', { name: /^Set payment budget/ }).click();
+  await page.getByTestId('payment-budget').getByLabel('Payment funds').fill('20');
   await page.getByRole('button', { name: /^Continue to wallet/ }).click();
-  await page.getByRole('button', { name: /^Set payment rules/ }).click();
-  await page.getByRole('button', { name: /^Save payment rules/ }).click();
   await expect(page.getByText('On', { exact: true }).first()).toBeVisible({ timeout: 30_000 });
 
   await page.getByRole('button', { name: /^Run agent/ }).click();

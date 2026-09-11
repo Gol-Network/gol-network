@@ -91,6 +91,11 @@ export interface DashboardProps {
   onProvisionAgent: () => void;
   onReviewAgentGas: () => void;
   onReviewAccountFunding: (amountUnits: string) => void;
+  onSetPaymentBudget: (
+    amountUnits: string,
+    perPaymentCapUnits: string,
+    cumulativeCapUnits: string,
+  ) => void;
   transferReview: TransferReview | null;
   setTransferReview: (value: TransferReview | null) => void;
   onConfirmTransfer: () => void;
@@ -606,14 +611,14 @@ function SetupGate(
 ) {
   const loading = props.account === null && props.accountError === null;
   const visibleStage = setupStage(props.nextStep.id);
-  const [setupFundingOpen, setSetupFundingOpen] = useState(false);
+  const [paymentBudgetOpen, setPaymentBudgetOpen] = useState(false);
 
   const runNextStep = () => {
     const action = props.nextStep.action;
     if (action === 'create_account') props.onCreateAccount();
     if (action === 'provision_agent') props.setConsentOpen(true);
     if (action === 'fund_agent_gas') props.onReviewAgentGas();
-    if (action === 'fund_account') setSetupFundingOpen(true);
+    if (action === 'fund_account') setPaymentBudgetOpen(true);
     if (action === 'sign_mandate') props.onReviewMandate();
   };
 
@@ -804,14 +809,16 @@ function SetupGate(
           disabled={props.busy !== null}
         />
       ) : null}
-      {setupFundingOpen ? (
-        <AmountEntryPanel
-          action="deposit"
-          availableUnits={props.account?.balances.ownerUsdcUnits ?? '0'}
-          onCancel={() => setSetupFundingOpen(false)}
-          onConfirm={(amountUnits) => {
-            setSetupFundingOpen(false);
-            props.onReviewAccountFunding(amountUnits);
+      {paymentBudgetOpen && props.account?.recipients[0] ? (
+        <PaymentBudgetPanel
+          availableUnits={props.account.balances.ownerUsdcUnits}
+          defaultUnits={props.config.accountTargetUnits}
+          recipient={props.account.recipients[0]}
+          accountAddress={props.account.accountAddress!}
+          onCancel={() => setPaymentBudgetOpen(false)}
+          onConfirm={(amountUnits, perPaymentCapUnits, cumulativeCapUnits) => {
+            setPaymentBudgetOpen(false);
+            props.onSetPaymentBudget(amountUnits, perPaymentCapUnits, cumulativeCapUnits);
           }}
         />
       ) : null}
@@ -1730,6 +1737,141 @@ function AmountEntryPanel(props: {
             </Button>
             <Button type="submit">
               Review transfer <ArrowUpRight size={14} />
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function PaymentBudgetPanel(props: {
+  availableUnits: string;
+  defaultUnits: string;
+  recipient: { address: string; label: string };
+  accountAddress: string;
+  onCancel: () => void;
+  onConfirm: (amountUnits: string, perPaymentCapUnits: string, cumulativeCapUnits: string) => void;
+}) {
+  const defaultAmount = formatUsdc(BigInt(props.defaultUnits));
+  const [fundingAmount, setFundingAmount] = useState(defaultAmount);
+  const [perPaymentCap, setPerPaymentCap] = useState(defaultAmount);
+  const [cumulativeCap, setCumulativeCap] = useState(defaultAmount);
+  const [error, setError] = useState<string | null>(null);
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    try {
+      const fundingUnits = parseUsdc(fundingAmount);
+      const perPaymentUnits = parseUsdc(perPaymentCap);
+      const cumulativeUnits = parseUsdc(cumulativeCap);
+      if (fundingUnits > BigInt(props.availableUnits)) {
+        setError('This is more than the USDC available in your wallet.');
+        return;
+      }
+      if (perPaymentUnits > cumulativeUnits) {
+        setError('The maximum for one payment cannot exceed the 7-day total.');
+        return;
+      }
+      props.onConfirm(
+        fundingUnits.toString(),
+        perPaymentUnits.toString(),
+        cumulativeUnits.toString(),
+      );
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Enter valid USDC amounts.');
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && props.onCancel()}>
+      <DialogContent data-testid="payment-budget" className="max-w-xl">
+        <form onSubmit={submit}>
+          <span className="font-mono text-[9px] uppercase tracking-[.18em] text-primary">
+            Funds and rules
+          </span>
+          <DialogTitle className="mt-2 text-xl font-semibold">Set your payment budget</DialogTitle>
+          <DialogDescription className="mt-2 text-sm leading-copy">
+            Choose the money GOL can use and its limits in one place. Unused funds remain yours and
+            can be withdrawn.
+          </DialogDescription>
+
+          <div className="mt-6 grid gap-4 sm:grid-cols-2">
+            <div className="sm:col-span-2">
+              <Label htmlFor="budget-funding">Payment funds</Label>
+              <Input
+                id="budget-funding"
+                className="mt-2 h-12 text-lg"
+                inputMode="decimal"
+                autoFocus
+                value={fundingAmount}
+                onChange={(event) => {
+                  setFundingAmount(event.target.value);
+                  setError(null);
+                }}
+              />
+              <p className="mt-2 text-xs text-muted-foreground">
+                Available in your wallet: {formatUsdc(BigInt(props.availableUnits))} USDC
+              </p>
+            </div>
+            <div>
+              <Label htmlFor="budget-per-payment">Maximum per payment</Label>
+              <Input
+                id="budget-per-payment"
+                className="mt-2"
+                inputMode="decimal"
+                value={perPaymentCap}
+                onChange={(event) => {
+                  setPerPaymentCap(event.target.value);
+                  setError(null);
+                }}
+              />
+            </div>
+            <div>
+              <Label htmlFor="budget-total">Total allowed for 7 days</Label>
+              <Input
+                id="budget-total"
+                className="mt-2"
+                inputMode="decimal"
+                value={cumulativeCap}
+                onChange={(event) => {
+                  setCumulativeCap(event.target.value);
+                  setError(null);
+                }}
+              />
+            </div>
+          </div>
+
+          <div className="mt-5 grid gap-3 rounded-card border border-border bg-muted p-4 text-xs sm:grid-cols-2">
+            <div className="min-w-0">
+              <span className="text-muted-foreground">Funds go to</span>
+              <strong className="mt-1 block">Your payment account</strong>
+              <code className="mt-1 block truncate text-[10px]" title={props.accountAddress}>
+                {shorten(props.accountAddress)}
+              </code>
+            </div>
+            <div className="min-w-0">
+              <span className="text-muted-foreground">GOL may only pay</span>
+              <strong className="mt-1 block">{props.recipient.label}</strong>
+              <code className="mt-1 block truncate text-[10px]" title={props.recipient.address}>
+                {shorten(props.recipient.address)}
+              </code>
+            </div>
+          </div>
+
+          <div className="mt-4 flex gap-3 rounded-card border border-primary/20 bg-accent p-4 text-xs leading-copy text-accent-foreground">
+            <Wallet className="mt-0.5 size-4 shrink-0" aria-hidden />
+            <p>
+              Your wallet will ask twice: first to add the funds, then to save these payment rules.
+            </p>
+          </div>
+          {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
+          <div className="mt-6 grid grid-cols-2 gap-2">
+            <Button variant="outline" onClick={props.onCancel} type="button">
+              Cancel
+            </Button>
+            <Button type="submit">
+              Continue to wallet <ArrowUpRight size={14} />
             </Button>
           </div>
         </form>
