@@ -39,6 +39,7 @@ jobs:
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm typecheck
+      - run: pnpm --filter @gol/protocol build
       - run: pnpm --filter @gol/subgraph codegen
       - run: pnpm test
         env:
