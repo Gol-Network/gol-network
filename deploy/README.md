@@ -9,7 +9,7 @@ replace the VM.
 
 - ARM64 or AMD64 Linux with Docker Engine 29 or compatible Compose v2
 - encrypted EBS storage for Docker volumes
-- inbound 80 and 443 only, with SSM or restricted SSH administration
+- inbound 80 and 443 only, with restricted SSH administration
 - AWS CLI role limited to the private backup bucket and KMS key
 - DNS `A` or `AAAA` record for `DOMAIN`
 
@@ -59,20 +59,22 @@ The script requires a clean source tree, or an explicit `ALLOW_DIRTY_TREE=1` tha
 ### GitHub Actions deployment
 
 The `deploy-production` workflow runs only after the `ci` workflow succeeds on `main`, or by an
-explicit manual dispatch. It verifies the exact AWS account, instance ID, running state, and SSM
-status before using Run Command to update `/opt/gol` to the tested commit. The host then runs
+explicit manual dispatch. It connects to the pinned production host over SSH, verifies the clean
+checkout and exact tested commit, then updates `/opt/gol-network` to that commit. The host runs
 `remote-release.sh`, which serializes releases, preserves the host-only `.env.production`, takes the
 normal encrypted pre-deploy backup, migrates, activates the stack, and checks health. The workflow
 finally requires the public health response to be ready and to report the same full source commit.
 
-Create a protected GitHub Environment named `production` with the secrets `AWS_ACCESS_KEY_ID` and
-`AWS_SECRET_ACCESS_KEY`. Use a dedicated deploy principal whose permissions are limited to
-`github-actions-ssm-policy.json`; do not place these credentials in `.env.production` or a container.
-Set the repository variable `PRODUCTION_DEPLOY_ENABLED=true` only after those credentials can pass
-the target and SSM preflight; an absent or different value keeps production deployment disabled.
-The repository is public, so the production host does not need a GitHub PAT to fetch a release.
-Before enabling the workflow, confirm `/opt/gol/deploy/.env.production` is mode `0600` and includes
-every current field, including `GOL_AGENT_SHARED_SECRET`.
+Create a protected GitHub Environment named `production` with secrets
+`PRODUCTION_SSH_PRIVATE_KEY` and `PRODUCTION_SSH_KNOWN_HOSTS`. The private key must be dedicated to
+the production deploy user. Populate the known-hosts secret only after independently verifying the
+host fingerprint; the workflow requires strict host-key checking and never trusts `ssh-keyscan` at
+runtime. Set the repository variable `PRODUCTION_DEPLOY_ENABLED=true` only after both secrets are
+configured; an absent or different value keeps production deployment disabled. The repository is
+public, so the production host does not need a GitHub PAT to fetch a release, and GitHub Actions
+needs no AWS access key. Before enabling the workflow, confirm
+`/opt/gol-network/deploy/.env.production` is mode `0600` and includes every current field, including
+`GOL_AGENT_SHARED_SECRET`.
 
 ## Backup and restore drill
 
