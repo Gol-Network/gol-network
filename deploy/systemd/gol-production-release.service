@@ -1,0 +1,14 @@
+[Unit]
+Description=Deploy the latest CI-approved GOL production release
+After=docker.service network-online.target
+Wants=network-online.target
+ConditionPathExists=/opt/gol-network/.git
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/sbin/gol-production-release
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=45min

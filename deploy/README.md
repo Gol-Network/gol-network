@@ -58,23 +58,27 @@ The script requires a clean source tree, or an explicit `ALLOW_DIRTY_TREE=1` tha
 
 ### GitHub Actions deployment
 
-The `deploy-production` workflow runs only after the `ci` workflow succeeds on `main`, or by an
-explicit manual dispatch. It connects to the pinned production host over SSH, verifies the clean
-checkout and exact tested commit, then updates `/opt/gol-network` to that commit. The host runs
-`remote-release.sh`, which serializes releases, preserves the host-only `.env.production`, takes the
-normal encrypted pre-deploy backup, migrates, activates the stack, and checks health. The workflow
-finally requires the public health response to be ready and to report the same full source commit.
+The `deploy-production` workflow publishes a production release approval only after `ci` succeeds
+on `main`. The production host polls that public workflow state every five minutes, requires the
+named `release` job to have succeeded, and requires the approved commit to equal the current
+`origin/main`. It then runs `remote-release.sh`, which serializes releases, preserves the host-only
+`.env.production`, takes the normal encrypted pre-deploy backup, migrates, activates the stack, and
+checks both internal and public health against the exact commit.
 
-Create a protected GitHub Environment named `production` with secrets
-`PRODUCTION_SSH_PRIVATE_KEY` and `PRODUCTION_SSH_KNOWN_HOSTS`. The private key must be dedicated to
-the production deploy user. Populate the known-hosts secret only after independently verifying the
-host fingerprint; the workflow requires strict host-key checking and never trusts `ssh-keyscan` at
-runtime. Set the repository variable `PRODUCTION_DEPLOY_ENABLED=true` only after both secrets are
-configured; an absent or different value keeps production deployment disabled. The repository is
-public, so the production host does not need a GitHub PAT to fetch a release, and GitHub Actions
-needs no AWS access key. Before enabling the workflow, confirm
+Install the pull-based deploy timer from the verified production checkout:
+
+```bash
+sudo GOL_REPO_DIR=/opt/gol-network ./deploy/install-release-poller.sh
+systemctl status gol-production-release.timer
+```
+
+Create a protected GitHub Environment named `production` and set the repository variable
+`PRODUCTION_DEPLOY_ENABLED=true`. No GitHub secret, host PAT, AWS access key, inbound webhook, SSM,
+or GitHub-to-host SSH access is required. The host fetches only the public repository and GitHub API;
+its instance role continues to provide backup/KMS access locally. Before enabling the timer, confirm
 `/opt/gol-network/deploy/.env.production` is mode `0600` and includes every current field, including
-`GOL_AGENT_SHARED_SECRET`.
+`GOL_AGENT_SHARED_SECRET`. Re-run the installer after changing the checked-in poller or systemd
+units.
 
 ## Backup and restore drill
 
