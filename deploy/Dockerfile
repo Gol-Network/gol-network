@@ -26,6 +26,7 @@ ENV PORT=3000
 WORKDIR /app
 COPY --from=web-build /app/web/.next/standalone ./
 COPY --from=web-build /app/web/.next/static ./web/.next/static
+COPY --from=web-build --chown=node:node /app/web/public ./web/public
 USER node
 EXPOSE 3000
 CMD ["node", "web/server.js"]
