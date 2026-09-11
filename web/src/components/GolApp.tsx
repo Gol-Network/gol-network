@@ -467,9 +467,10 @@ function GolExperience({
 
   const runOwnerAction = useCallback(
     async (kind: OwnerActionKind, work: (reporter: ReturnType<typeof report>) => Promise<void>) => {
-      if (busy) return;
+      if (busy) return false;
       const before = accountRef.current;
       let refreshed = false;
+      let converged = false;
       setBusy(kind);
       setTx({ kind, phase: 'awaiting_signature', hash: null, detail: '' });
       try {
@@ -478,7 +479,10 @@ function GolExperience({
           if (delay > 0) await pause(delay);
           const snapshot = await refreshAccount();
           refreshed = true;
-          if (ownerActionStateConverged(kind, before, snapshot)) break;
+          if (ownerActionStateConverged(kind, before, snapshot)) {
+            converged = true;
+            break;
+          }
         }
       } catch (error) {
         setTx((current) => ({
@@ -491,6 +495,7 @@ function GolExperience({
         setBusy(null);
         if (!refreshed) await refreshAccount();
       }
+      return converged;
     },
     [busy, report, refreshAccount],
   );
@@ -559,6 +564,43 @@ function GolExperience({
       amountUnits,
       note: 'Only money added here can be used for agent payments.',
     });
+  }
+
+  async function onSetPaymentBudget(
+    amountUnits: string,
+    perPaymentCapUnits: string,
+    cumulativeCapUnits: string,
+  ) {
+    const current = accountRef.current;
+    const recipient = current?.recipients[0];
+    if (!current?.accountAddress || !current.agentAddress || !recipient) return;
+
+    const funded = await runOwnerAction('fund_account', async (reporter) =>
+      backend.fundAccount(current.accountAddress!, BigInt(amountUnits), (update) =>
+        reporter({
+          ...update,
+          detail: update.detail ?? 'Approval 1 of 2: add payment funds.',
+        }),
+      ),
+    );
+    if (!funded) return;
+
+    const draft: MandateDraft = {
+      agent: current.agentAddress,
+      recipient: recipient.address,
+      recipientLabel: recipient.label,
+      perPaymentCapUnits,
+      cumulativeCapUnits,
+      expiresAt: String(Math.floor(Date.now() / 1_000) + SEVEN_DAYS_SECONDS),
+    };
+    await runOwnerAction('sign_mandate', async (reporter) =>
+      backend.signMandate(current.accountAddress!, draft, (update) =>
+        reporter({
+          ...update,
+          detail: update.detail ?? 'Approval 2 of 2: save payment rules.',
+        }),
+      ),
+    );
   }
 
   function onReviewWithdraw(amountUnits: string) {
@@ -740,6 +782,8 @@ function GolExperience({
     onProvisionAgent: () => void onProvisionAgent(),
     onReviewAgentGas,
     onReviewAccountFunding,
+    onSetPaymentBudget: (amountUnits, perPaymentCapUnits, cumulativeCapUnits) =>
+      void onSetPaymentBudget(amountUnits, perPaymentCapUnits, cumulativeCapUnits),
     onReviewWithdraw,
     transferReview,
     setTransferReview,

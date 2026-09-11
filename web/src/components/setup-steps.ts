@@ -137,13 +137,13 @@ export function deriveSteps(input: {
         },
     {
       id: 'account_funded',
-      title: 'Add payment funds',
+      title: 'Set your payment budget',
       detail: accountFunded
         ? 'GOL has USDC available for approved payments.'
-        : 'Choose how much USDC the agent may use. This is separate from the spending limit.',
+        : 'Choose the funds and 7-day limits once. Your wallet will ask for two approvals.',
       complete: accountFunded,
       action: 'fund_account',
-      actionLabel: 'Choose amount',
+      actionLabel: 'Set payment budget',
     },
     {
       id: 'mandate',
