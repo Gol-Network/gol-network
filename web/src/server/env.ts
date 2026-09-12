@@ -231,7 +231,6 @@ export function parseEnvironment(
         agentSignerProvider,
         agentSignerAddress: isKms ? awsKmsSignerAddress : null,
         agentGasManaged,
-        recipientLabel: value('GOL_RECIPIENT_LABEL') ?? 'Design contractor',
         accountTargetUnits: usdcUnits(
           'GOL_ACCOUNT_TARGET_USDC',
           value('GOL_ACCOUNT_TARGET_USDC'),

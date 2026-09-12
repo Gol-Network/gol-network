@@ -99,7 +99,8 @@ const resolver: WorkerContextResolver = {
               a.signer_address,
               r.address AS recipient_address, r.label
        FROM account_links a
-       LEFT JOIN recipients r USING (account_address)
+       LEFT JOIN recipients r
+         ON r.account_address = a.account_address AND r.confirmed_at IS NOT NULL
        WHERE a.user_subject = $1 AND lower(a.account_address) = lower($2)`,
       [job.userSubject, job.account],
     );

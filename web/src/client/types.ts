@@ -4,6 +4,10 @@ import type { PreparedAaveTransaction } from './aave-transactions';
 export interface RecipientEntry {
   address: Address;
   label: string;
+  /** True only after the owner explicitly entered this label and address. */
+  confirmed: boolean;
+  /** Whether the active on-chain mandate currently allows this exact address. */
+  allowedByActiveMandate: boolean;
 }
 
 export interface AccountBalances {

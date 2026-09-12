@@ -30,6 +30,7 @@ test('capture labeled fixture states', async ({ page }) => {
   await page.getByRole('button', { name: 'Open fixture demo', exact: true }).click();
   await page.getByRole('button', { name: /^Create payment account/ }).click();
   await page.getByRole('button', { name: /Choose recipient/ }).click();
+  await page.getByLabel('Recipient name').fill('Design contractor');
   await page.getByLabel('Recipient wallet address').fill(RECIPIENT);
   await page.getByRole('button', { name: /Create payment agent/ }).click();
   await page.getByRole('button', { name: /^Add 1 USDC fee reserve/ }).click();
@@ -39,6 +40,7 @@ test('capture labeled fixture states', async ({ page }) => {
   await page.getByRole('button', { name: /^Continue to wallet/ }).click();
   await expect(page.getByText('On', { exact: true }).first()).toBeVisible({ timeout: 30_000 });
 
+  await page.getByRole('button', { name: '10 USDC' }).click();
   await page.getByRole('button', { name: /^Run agent/ }).click();
   await page
     .getByTestId('instruction-preview')

@@ -8,6 +8,7 @@ import {
   CirclePlus,
   Copy,
   KeyRound,
+  LoaderCircle,
   Mail,
   Moon,
   ShieldCheck,
@@ -77,10 +78,13 @@ export interface DashboardProps {
   config: PublicConfig;
   auth: AuthState;
   account: AccountSnapshot | null;
+  accountLoading: boolean;
   accountError: string | null;
   steps: SetupStep[];
   tx: TransactionState;
   busy: OwnerActionKind | null;
+  recipientLabelInput: string;
+  setRecipientLabelInput: (value: string) => void;
   recipientInput: string;
   setRecipientInput: (value: string) => void;
   consentOpen: boolean;
@@ -211,9 +215,29 @@ export function Dashboard(props: DashboardProps) {
     window.localStorage.setItem('gol-theme', nextTheme);
   };
 
+  if (!props.auth.ready) {
+    return (
+      <AccountLoadingGate
+        theme={theme}
+        onThemeChange={selectTheme}
+        ownerAddress={props.auth.ownerAddress ?? null}
+      />
+    );
+  }
+
   if (!props.auth.authenticated) {
     return (
       <SignInGate config={config} auth={props.auth} theme={theme} onThemeChange={selectTheme} />
+    );
+  }
+
+  if (props.accountLoading) {
+    return (
+      <AccountLoadingGate
+        theme={theme}
+        onThemeChange={selectTheme}
+        ownerAddress={props.auth.ownerAddress ?? null}
+      />
     );
   }
 
@@ -250,7 +274,7 @@ export function Dashboard(props: DashboardProps) {
         />
         <ActionDrawer
           open={drawerOpen}
-          recipientLabel={config.recipientLabel}
+          recipientLabel={account?.recipients[0]?.label ?? 'Approved recipient'}
           recipientAddress={account?.recipients[0]?.address}
           onClose={() => setDrawerOpen(false)}
           onListTokens={props.onListMoneyTokens}
@@ -319,7 +343,10 @@ export function Dashboard(props: DashboardProps) {
                   remainingUnits={remainingUnits}
                   onActions={() => setDrawerOpen(true)}
                   onDeposit={() => setBalanceAction('deposit')}
-                  onPay={() => setChatDraft(`Pay 10 USDC to ${config.recipientLabel}`)}
+                  onPay={() => {
+                    const recipient = account?.recipients[0];
+                    if (recipient) setChatDraft(`Pay 10 USDC to ${recipient.label}`);
+                  }}
                 />
 
                 <Tabs value={tab} onValueChange={setTab} className="mt-7">
@@ -456,6 +483,8 @@ export function Dashboard(props: DashboardProps) {
                   <ConsentPanel
                     config={config}
                     account={account}
+                    recipientLabelInput={props.recipientLabelInput}
+                    setRecipientLabelInput={props.setRecipientLabelInput}
                     recipientInput={props.recipientInput}
                     setRecipientInput={props.setRecipientInput}
                     onCancel={() => props.setConsentOpen(false)}
@@ -546,6 +575,7 @@ export function Dashboard(props: DashboardProps) {
           >
             <AgentChat
               ownerAddress={account?.ownerAddress}
+              recipientLabel={account?.recipients[0]?.label ?? null}
               draft={chatDraft}
               onDraftChange={setChatDraft}
               onMandatePrompt={(prompt) => props.onPreview(prompt)}
@@ -587,7 +617,7 @@ export function Dashboard(props: DashboardProps) {
       </div>
       <ActionDrawer
         open={drawerOpen}
-        recipientLabel={config.recipientLabel}
+        recipientLabel={account?.recipients[0]?.label ?? 'Approved recipient'}
         recipientAddress={account?.recipients[0]?.address}
         onClose={() => setDrawerOpen(false)}
         onListTokens={props.onListMoneyTokens}
@@ -596,6 +626,53 @@ export function Dashboard(props: DashboardProps) {
         onSend={props.onExecuteMoneySend}
         onReceive={props.onGetMoneyReceiveInfo}
       />
+    </main>
+  );
+}
+
+function AccountLoadingGate({
+  theme,
+  onThemeChange,
+  ownerAddress,
+}: {
+  theme: ThemeMode;
+  onThemeChange: (theme: ThemeMode) => void;
+  ownerAddress: string | null;
+}) {
+  return (
+    <main
+      className={`theme-${theme} min-h-screen max-w-none bg-background text-foreground transition-colors`}
+      aria-busy="true"
+    >
+      <header className="flex h-[68px] items-center justify-between border-b border-border px-4 sm:px-7">
+        <a className="flex items-center gap-2.5 text-sm font-bold tracking-[.16em]" href="#account">
+          <img className="size-8" src="/gol-mark-blue.svg" alt="" />
+          <span className="font-mono text-sm tracking-[.22em]">GOL</span>
+        </a>
+        <div className="flex items-center gap-3">
+          <ThemeIconButton theme={theme} onChange={onThemeChange} />
+          {ownerAddress ? (
+            <Badge variant="secondary" className="font-mono text-[10px]">
+              {ownerAddress.slice(0, 8)}...{ownerAddress.slice(-4)}
+            </Badge>
+          ) : null}
+        </div>
+      </header>
+      <section
+        id="account"
+        className="grid min-h-[calc(100vh-68px)] place-items-center px-4 py-8"
+        aria-live="polite"
+      >
+        <Card className="w-full max-w-sm shadow-panel">
+          <CardContent className="flex flex-col items-center px-6 py-10 text-center">
+            <LoaderCircle className="size-6 animate-spin text-primary" aria-hidden="true" />
+            <h1 className="mt-4 text-lg font-semibold">Restoring your account</h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Checking your payment account and rules.
+            </p>
+          </CardContent>
+        </Card>
+      </section>
     </main>
   );
 }
@@ -798,6 +875,8 @@ function SetupGate(
         <ConsentPanel
           config={props.config}
           account={props.account}
+          recipientLabelInput={props.recipientLabelInput}
+          setRecipientLabelInput={props.setRecipientLabelInput}
           recipientInput={props.recipientInput}
           setRecipientInput={props.setRecipientInput}
           onCancel={() => props.setConsentOpen(false)}
@@ -1623,6 +1702,8 @@ function PrivateKeyWarning(props: {
 function ConsentPanel(props: {
   config: PublicConfig;
   account: AccountSnapshot | null;
+  recipientLabelInput: string;
+  setRecipientLabelInput: (value: string) => void;
   recipientInput: string;
   setRecipientInput: (value: string) => void;
   onCancel: () => void;
@@ -1638,7 +1719,7 @@ function ConsentPanel(props: {
         </span>
         <DialogTitle className="mt-2 text-xl font-semibold">Choose a payment recipient</DialogTitle>
         <DialogDescription className="mt-2 text-sm leading-copy">
-          GOL will only be able to pay the address you choose here.
+          Name and verify the one address GOL may pay. Nothing is selected for you.
         </DialogDescription>
         <div className="mt-5 grid gap-2 rounded-card border border-border bg-muted p-4 text-xs">
           <p>
@@ -1654,11 +1735,25 @@ function ConsentPanel(props: {
             <strong>You stay in control:</strong> change or turn off the rules anytime
           </p>
         </div>
+        <Label className="mt-5 block text-xs font-medium" htmlFor="recipient-label">
+          Recipient name
+        </Label>
+        <p className="mt-1 text-xs leading-copy text-muted-foreground">
+          This label is only for display. It does not verify the recipient's identity.
+        </p>
+        <Input
+          id="recipient-label"
+          className="mt-2"
+          placeholder="For example, Design contractor"
+          value={props.recipientLabelInput}
+          maxLength={100}
+          onChange={(event) => props.setRecipientLabelInput(event.target.value)}
+        />
         <Label className="mt-5 block text-xs font-medium" htmlFor="recipient">
           Recipient wallet address
         </Label>
         <p className="mt-1 text-xs leading-copy text-muted-foreground">
-          For this demo, your own wallet is prefilled. Replace it with a contractor or merchant.
+          Check the complete address. GOL never guesses or prefills a recipient.
         </p>
         <Input
           id="recipient"
@@ -1671,7 +1766,12 @@ function ConsentPanel(props: {
           <Button variant="outline" onClick={props.onCancel}>
             Cancel
           </Button>
-          <Button onClick={props.onConfirm} disabled={props.disabled}>
+          <Button
+            onClick={props.onConfirm}
+            disabled={
+              props.disabled || !props.recipientLabelInput.trim() || !props.recipientInput.trim()
+            }
+          >
             {isKms ? 'Connect payment agent' : 'Create payment agent'} <ArrowUpRight size={14} />
           </Button>
         </div>

@@ -27,7 +27,13 @@ export async function POST(request: Request) {
     rateLimit(`pay:${session.subject}`, 5);
     const body = schema.parse(await readJson(request));
     const link = await pool.query(
-      'SELECT account_address FROM account_links WHERE user_subject = $1',
+      `SELECT a.account_address,
+              EXISTS (
+                SELECT 1 FROM recipients r
+                WHERE r.account_address = a.account_address AND r.confirmed_at IS NOT NULL
+              ) AS recipient_confirmed
+       FROM account_links a
+       WHERE a.user_subject = $1`,
       [session.subject],
     );
     if (link.rowCount !== 1)
@@ -35,6 +41,9 @@ export async function POST(request: Request) {
     const account = addressSchema.parse(String(link.rows[0].account_address).trim());
     if (body.account && body.account.toLowerCase() !== account.toLowerCase()) {
       return NextResponse.json({ error: 'ACCOUNT_SCOPE_MISMATCH' }, { status: 403 });
+    }
+    if (link.rows[0].recipient_confirmed !== true) {
+      return NextResponse.json({ error: 'RECIPIENT_CONFIRMATION_REQUIRED' }, { status: 409 });
     }
     const journal = new PgJournal(pool);
     const result = await journal.enqueue({

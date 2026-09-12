@@ -10,6 +10,7 @@ import {
 import {
   addressSchema,
   formatUsdc,
+  recipientLabelSchema,
   type ActivityPage,
   type Address,
   type GroundedAnswer,
@@ -64,7 +65,7 @@ function PrivyGolApp({ config }: { config: PublicConfig }) {
       setAuthError('Privy could not complete sign in. Please try again.');
     },
   });
-  const { wallets } = useWallets();
+  const { wallets, ready: walletsReady } = useWallets();
   const { exportWallet } = useExportWallet();
   const { linkWallet } = useLinkAccount({
     onSuccess: () => setWalletActionError(null),
@@ -79,11 +80,15 @@ function PrivyGolApp({ config }: { config: PublicConfig }) {
   const walletsRef = useRef(wallets);
   walletsRef.current = wallets;
   const userWalletAddress = user?.wallet?.address.toLowerCase();
-  const activeOwnerWallet =
-    wallets.find((wallet) => wallet.walletClientType === 'privy') ??
-    wallets.find((wallet) => wallet.address.toLowerCase() === userWalletAddress) ??
-    wallets[0] ??
-    null;
+  // Privy can expose a connected external wallet before its embedded wallet collection has
+  // finished hydrating. Treating that provisional wallet as the owner briefly loads a different
+  // account and flashes onboarding. Only select an owner from the complete wallet collection.
+  const activeOwnerWallet = walletsReady
+    ? (wallets.find((wallet) => wallet.walletClientType === 'privy') ??
+      wallets.find((wallet) => wallet.address.toLowerCase() === userWalletAddress) ??
+      wallets[0] ??
+      null)
+    : null;
   const ownerAddress = activeOwnerWallet?.address ?? null;
   const preferredRef = useRef<string | undefined>(undefined);
   preferredRef.current = ownerAddress ?? undefined;
@@ -145,7 +150,7 @@ function PrivyGolApp({ config }: { config: PublicConfig }) {
 
   const auth: AuthState = {
     mode: 'live',
-    ready,
+    ready: ready && (!authenticated || walletsReady),
     authenticated,
     label: authenticated ? 'Signed in with Privy' : 'Sign in with Privy',
     error: authError,
@@ -193,7 +198,7 @@ function PrivyGolApp({ config }: { config: PublicConfig }) {
       config={config}
       auth={auth}
       backend={backend}
-      enabled={ready && authenticated && wallets.length > 0}
+      enabled={ready && walletsReady && authenticated && ownerAddress !== null}
     />
   );
 }
@@ -267,6 +272,7 @@ function GolExperience({
   enabled: boolean;
 }) {
   const [account, setAccount] = useState<AccountSnapshot | null>(null);
+  const [accountLoaded, setAccountLoaded] = useState(false);
   const [accountError, setAccountError] = useState<string | null>(null);
   const [tx, setTx] = useState<TransactionState>({
     kind: null,
@@ -275,12 +281,13 @@ function GolExperience({
     detail: '',
   });
   const [busy, setBusy] = useState<OwnerActionKind | null>(null);
+  const [recipientLabelInput, setRecipientLabelInput] = useState('');
   const [recipientInput, setRecipientInput] = useState('');
   const [consentOpen, setConsentOpen] = useState(false);
   const [transferReview, setTransferReview] = useState<TransferReview | null>(null);
   const [mandateReview, setMandateReview] = useState<MandateDraft | null>(null);
 
-  const [instruction, setInstruction] = useState(`Pay 10 USDC to ${config.recipientLabel}`);
+  const [instruction, setInstruction] = useState('');
   const [preview, setPreview] = useState<InstructionPreview | null>(null);
   const [payment, setPayment] = useState<PaymentView>(IDLE_PAYMENT);
 
@@ -297,6 +304,11 @@ function GolExperience({
 
   const accountRef = useRef<AccountSnapshot | null>(null);
   accountRef.current = account;
+
+  useEffect(() => {
+    setRecipientLabelInput('');
+    setRecipientInput('');
+  }, [auth.ownerAddress]);
 
   const refreshAccount = useCallback(async () => {
     if (!enabled) {
@@ -340,29 +352,21 @@ function GolExperience({
   );
 
   useEffect(() => {
-    void refreshAccount();
-  }, [refreshAccount]);
-
-  useEffect(() => {
-    if (recipientInput.trim()) return;
-    const excluded = new Set(
-      [auth.ownerAddress, account?.ownerAddress, account?.accountAddress, account?.agentAddress]
-        .filter((value): value is string => Boolean(value))
-        .map((value) => value.toLowerCase()),
-    );
-    const candidates = (auth.wallets ?? []).filter(
-      (wallet) => !excluded.has(wallet.address.toLowerCase()),
-    );
-    const fallbackWallet =
-      candidates.find((wallet) => !wallet.exportable) ??
-      candidates.find((wallet) => wallet.imported) ??
-      null;
-    const suggestedAddress =
-      auth.ownerAddress ?? account?.ownerAddress ?? fallbackWallet?.address ?? null;
-    if (suggestedAddress) {
-      setRecipientInput(suggestedAddress);
+    let active = true;
+    if (!enabled) {
+      setAccount(null);
+      setAccountError(null);
+      setAccountLoaded(false);
+      return;
     }
-  }, [account, auth.ownerAddress, auth.wallets, recipientInput]);
+
+    void refreshAccount().finally(() => {
+      if (active) setAccountLoaded(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, [enabled, refreshAccount]);
 
   const accountAddress = account?.accountAddress ?? null;
   const accountLinked = account?.linked ?? false;
@@ -555,14 +559,17 @@ function GolExperience({
   }
 
   async function onProvisionAgent() {
-    const parsed = addressSchema.safeParse(normalizeAddress(recipientInput));
+    const parsed = recipientLabelSchema.safeParse({
+      label: recipientLabelInput,
+      address: normalizeAddress(recipientInput),
+    });
     const current = accountRef.current;
     if (!parsed.success || !current?.accountAddress) {
       setTx({
         kind: 'provision_agent',
         phase: 'failed',
         hash: null,
-        detail: 'Enter the only address this agent is allowed to pay.',
+        detail: 'Enter a recipient name and the exact wallet address this agent may pay.',
       });
       return;
     }
@@ -571,8 +578,8 @@ function GolExperience({
       await backend.provisionAgent(
         current.accountAddress!,
         current.ownerAddress,
-        parsed.data,
-        config.recipientLabel,
+        parsed.data.address,
+        parsed.data.label,
       );
     });
   }
@@ -727,15 +734,23 @@ function GolExperience({
       setPayment({ ...IDLE_PAYMENT, stage: 'needs_clarification', detail: parsed.message });
       return;
     }
-    const label =
-      current.recipients.find(
-        (entry) => entry.address.toLowerCase() === parsed.intent.recipient.toLowerCase(),
-      )?.label ?? config.recipientLabel;
+    const recipient = current.recipients.find(
+      (entry) => entry.address.toLowerCase() === parsed.intent.recipient.toLowerCase(),
+    );
+    if (!recipient) {
+      setPreview(null);
+      setPayment({
+        ...IDLE_PAYMENT,
+        stage: 'needs_clarification',
+        detail: 'That recipient is not in the owner-approved payment rule.',
+      });
+      return;
+    }
     setPreview({
       requestId: randomRequestId(),
       amountUsdc: parsed.intent.amountUsdc,
       recipient: parsed.intent.recipient,
-      recipientLabel: label,
+      recipientLabel: recipient.label,
       mandateId: current.activeMandateId,
     });
     setPayment(IDLE_PAYMENT);
@@ -805,10 +820,13 @@ function GolExperience({
     config,
     auth,
     account,
+    accountLoading: auth.authenticated && !accountLoaded,
     accountError,
     steps,
     tx,
     busy,
+    recipientLabelInput,
+    setRecipientLabelInput,
     recipientInput,
     setRecipientInput,
     consentOpen,
@@ -926,7 +944,14 @@ function ownerActionStateConverged(
 ) {
   if (!after) return false;
   if (kind === 'create_account') return after.accountAddress !== before?.accountAddress;
-  if (kind === 'provision_agent') return after.linked && Boolean(after.agentAddress);
+  if (kind === 'provision_agent') {
+    return (
+      after.linked &&
+      Boolean(after.agentAddress) &&
+      after.recipients.length === 1 &&
+      after.recipients[0]?.confirmed === true
+    );
+  }
   if (kind === 'fund_agent_gas') {
     return after.balances.agentGasWei !== before?.balances.agentGasWei;
   }
