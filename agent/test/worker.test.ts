@@ -419,6 +419,39 @@ describe('payment worker (aws_kms) persist-before-broadcast', () => {
     expect(journal.finishes.at(-1)).toMatchObject({ state: 'executed' });
   });
 
+  it('reconciles an already-mined recovery row without broadcasting it again', async () => {
+    const journal = new FakeJournal(
+      job({
+        state: 'unknown',
+        signedRawTransaction: RAW,
+        txHash: keccak256(RAW) as Hex32,
+        txNonce: '7',
+        parsedRecipient: RECIPIENT,
+        parsedAmount: '40000000',
+      }),
+    );
+    const signer = new FakeKmsSigner();
+    const chain = new FakeChain();
+    chain.waitForReceipt = async () => ({
+      transactionHash: keccak256(RAW) as Hex32,
+      blockNumber: 10n,
+      blockHash: `0x${'cd'.repeat(32)}`,
+      status: 'reverted',
+      from: AGENT,
+      to: ACCOUNT,
+      logs: [],
+    });
+
+    await new PaymentWorker('worker-1', journal, {
+      resolve: async () => kmsContext(signer, chain),
+    }).tick();
+
+    expect(signer.signTransaction).not.toHaveBeenCalled();
+    expect(chain.broadcast).not.toHaveBeenCalled();
+    expect(journal.broadcasts).toBe(0);
+    expect(journal.finishes.at(-1)).toMatchObject({ state: 'technical_failure' });
+  });
+
   it('re-signs a prepared row under the same reserved nonce when no bytes were stored', async () => {
     const journal = new FakeJournal(
       job({

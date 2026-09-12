@@ -147,6 +147,18 @@ export class PaymentWorker {
   // -----------------------------------------------------------------------------------------------
 
   private async runRaw(job: JournalRequest, deps: RawWorkerContext): Promise<void> {
+    // Recovery rows may retain both the signed bytes and the locally calculated hash. If that hash
+    // is already mined, reconcile it directly instead of attempting to move `unknown` back through
+    // the broadcast state machine (which is deliberately forbidden by the journal).
+    if (
+      job.state === 'unknown' &&
+      job.txHash &&
+      (await deps.chain.getReceiptIfPresent(job.txHash))
+    ) {
+      await this.reconcileRaw(job, deps, job.txHash);
+      return;
+    }
+
     // After raw-transaction persistence, always reuse the exact bytes; never re-sign.
     if (job.signedRawTransaction) {
       await this.rebroadcastAndReconcile(job, deps, job.signedRawTransaction);
@@ -392,7 +404,12 @@ export class PaymentWorker {
         deps.chain,
       );
       await this.journal.finish(job.id, this.workerId, {
-        state: result.state === 'executed' || result.state === 'refused' ? result.state : 'unknown',
+        state:
+          result.state === 'executed' ||
+          result.state === 'refused' ||
+          result.state === 'technical_failure'
+            ? result.state
+            : 'unknown',
         rule: result.rule,
         attemptedUnits: result.attemptedUnits,
         headroomUnits: result.headroomUnits,
@@ -543,7 +560,12 @@ export class PaymentWorker {
         dependencies.chain,
       );
       await this.journal.finish(job.id, this.workerId, {
-        state: result.state === 'executed' || result.state === 'refused' ? result.state : 'unknown',
+        state:
+          result.state === 'executed' ||
+          result.state === 'refused' ||
+          result.state === 'technical_failure'
+            ? result.state
+            : 'unknown',
         rule: result.rule,
         attemptedUnits: result.attemptedUnits,
         headroomUnits: result.headroomUnits,
