@@ -418,6 +418,9 @@ export function createFixtureBackend(config: PublicConfig): GolBackend {
     },
 
     async getActivity(): Promise<ActivityPage> {
+      // Match the live journal boundary: activity is not available until this owner has linked the
+      // on-chain account to an agent.
+      if (!agentProvisioned) throw new Error('ACCOUNT_NOT_FOUND');
       for (const request of requests.values()) {
         if (
           !request.indexed &&

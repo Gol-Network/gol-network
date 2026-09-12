@@ -169,6 +169,14 @@ test.describe('mocked provider walkthrough', () => {
     await budget.getByRole('button', { name: /^Continue to wallet/ }).click();
     await expect(page.getByText('On', { exact: true }).first()).toBeVisible(CONFIRMATION);
 
+    // The account address exists before provisioning, but indexed activity is journal-authorized
+    // only after the link is created. Linking must retry the initial ACCOUNT_NOT_FOUND load even
+    // though the contract address itself did not change.
+    await page.getByRole('tab', { name: 'Activity', exact: true }).click();
+    await expect(page.getByText('CURRENT', { exact: true })).toBeVisible(CONFIRMATION);
+    await expect(page.getByText(/Indexed through block/)).toBeVisible(CONFIRMATION);
+    await page.getByRole('tab', { name: 'Overview', exact: true }).click();
+
     // Browser sidebars and narrow windows must not collapse the post-setup workspace.
     for (const width of [320, 960]) {
       await page.setViewportSize({ width, height: 720 });
