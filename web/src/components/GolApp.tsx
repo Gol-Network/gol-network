@@ -365,10 +365,16 @@ function GolExperience({
   }, [account, auth.ownerAddress, auth.wallets, recipientInput]);
 
   const accountAddress = account?.accountAddress ?? null;
+  const accountLinked = account?.linked ?? false;
   useEffect(() => {
-    if (!accountAddress) {
+    // An account contract can exist on-chain before the authenticated user has linked it to the
+    // server journal. Loading activity during that gap correctly returns ACCOUNT_NOT_FOUND. Retry
+    // when provisioning flips `linked` to true even though the contract address itself is stable.
+    if (!accountAddress || !accountLinked) {
       pendingRef.current = [];
       setPending([]);
+      setPage(null);
+      setLastGoodPage(null);
       return;
     }
     let cancelled = false;
@@ -397,7 +403,7 @@ function GolExperience({
     return () => {
       cancelled = true;
     };
-  }, [backend, refreshActivity, accountAddress]);
+  }, [backend, refreshActivity, accountAddress, accountLinked]);
 
   // Bounded automatic indexing window. The overlay is retained after it closes.
   useEffect(() => {
