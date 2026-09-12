@@ -23,7 +23,13 @@ import { createLiveBackend } from '@/client/live-backend';
 import { createBotanaryMoneyClient } from '@/client/botanary-money';
 import type { PreparedAaveTransaction } from '@/client/aave-transactions';
 import { errorCodeCopy, isTerminalStage, stageFromJournal } from '@/client/stages';
-import { INDEXING_BACKOFF_MS, isIndexed, type PendingActivity } from '@/client/timeline';
+import {
+  INDEXING_BACKOFF_MS,
+  isIndexed,
+  parsePendingActivityReferences,
+  serializePendingActivityReferences,
+  type PendingActivity,
+} from '@/client/timeline';
 import type {
   AccountSnapshot,
   AuthState,
@@ -32,6 +38,7 @@ import type {
   MandateDraft,
   OwnerActionKind,
   PaymentStage,
+  RequestSnapshot,
   TransactionState,
 } from '@/client/types';
 import { Dashboard, type DashboardProps, type TransferReview } from './Dashboard';
@@ -282,6 +289,7 @@ function GolExperience({
   const [pending, setPending] = useState<PendingActivity[]>([]);
   const [indexingWindowClosed, setIndexingWindowClosed] = useState(false);
   const [checkingIndexing, setCheckingIndexing] = useState(false);
+  const pendingRef = useRef<PendingActivity[]>([]);
 
   const [question, setQuestion] = useState('What was this agent refused, and why?');
   const [answer, setAnswer] = useState<GroundedAnswer | null>(null);
@@ -314,12 +322,13 @@ function GolExperience({
         const next = await backend.getActivity(target);
         setPage(next);
         if (next.freshness !== 'unavailable') setLastGoodPage(next);
-        setPending((current) => {
-          const remaining = current.filter((entry) => !isIndexed(next, entry));
-          // Keep the same array identity when nothing was indexed, so the bounded polling
-          // window is not restarted by its own refresh.
-          return remaining.length === current.length ? current : remaining;
-        });
+        const current = pendingRef.current;
+        const remaining = current.filter((entry) => !isIndexed(next, entry));
+        if (remaining.length !== current.length) {
+          pendingRef.current = remaining;
+          setPending(remaining);
+          persistPendingActivities(target, remaining);
+        }
         return next;
       } catch {
         // A Graph failure never removes a confirmed on-chain result.
@@ -357,8 +366,38 @@ function GolExperience({
 
   const accountAddress = account?.accountAddress ?? null;
   useEffect(() => {
+    if (!accountAddress) {
+      pendingRef.current = [];
+      setPending([]);
+      return;
+    }
+    let cancelled = false;
+    const references = restorePendingActivityReferences(accountAddress);
+    pendingRef.current = [];
+    setPending([]);
+    void (async () => {
+      const restored = (
+        await Promise.all(
+          references.map(async (reference) => {
+            try {
+              const snapshot = await backend.getRequest(reference.requestId);
+              if (snapshot.account.toLowerCase() !== accountAddress.toLowerCase()) return null;
+              return pendingActivityFromSnapshot(snapshot, reference.confirmedAt);
+            } catch {
+              return null;
+            }
+          }),
+        )
+      ).filter((entry): entry is PendingActivity => entry !== null);
+      if (cancelled) return;
+      pendingRef.current = restored;
+      setPending(restored);
+    })();
     void refreshActivity(accountAddress);
-  }, [refreshActivity, accountAddress]);
+    return () => {
+      cancelled = true;
+    };
+  }, [backend, refreshActivity, accountAddress]);
 
   // Bounded automatic indexing window. The overlay is retained after it closes.
   useEffect(() => {
@@ -406,27 +445,19 @@ function GolExperience({
         });
         if (isTerminalStage(stage)) {
           const linked = accountRef.current?.accountAddress;
-          if (linked) window.localStorage.removeItem(pendingRequestKey(linked));
           if ((stage === 'executed' || stage === 'refused') && snapshot.txHash) {
-            const overlay: PendingActivity = {
-              requestId,
-              txHash: snapshot.txHash,
-              outcome: stage === 'executed' ? 'EXECUTED' : 'REFUSED',
-              rule: snapshot.rule ?? (stage === 'executed' ? 'NONE' : 'CUMULATIVE_CAP'),
-              mandateId: snapshot.mandateId,
-              recipient: snapshot.recipient ?? '',
-              attempted: snapshot.attemptedUnits ?? '0',
-              transferred: stage === 'executed' ? (snapshot.attemptedUnits ?? '0') : '0',
-              headroom: snapshot.headroomUnits ?? '0',
-              spentAfter: '0',
-              confirmedAt: Date.now(),
-            };
-            setPending((current) =>
-              current.some((entry) => entry.requestId === overlay.requestId)
+            const overlay = pendingActivityFromSnapshot(snapshot, Date.now());
+            if (overlay) {
+              const current = pendingRef.current;
+              const next = current.some((entry) => entry.requestId === overlay.requestId)
                 ? current
-                : [overlay, ...current],
-            );
+                : [overlay, ...current];
+              pendingRef.current = next;
+              setPending(next);
+              if (linked) persistPendingActivities(linked, next);
+            }
           }
+          if (linked) window.localStorage.removeItem(pendingRequestKey(linked));
           const refreshed = await refreshAccount();
           await refreshActivity(refreshed?.accountAddress ?? accountRef.current?.accountAddress);
           return;
@@ -830,6 +861,51 @@ function normalizeAddress(value: string): string {
 
 function pendingRequestKey(account: string) {
   return `gol:pending:${account.toLowerCase()}`;
+}
+
+function pendingActivitiesKey(account: string) {
+  return `gol:pending-activity:${account.toLowerCase()}`;
+}
+
+function restorePendingActivityReferences(account: string) {
+  try {
+    return parsePendingActivityReferences(
+      window.localStorage.getItem(pendingActivitiesKey(account)),
+    );
+  } catch {
+    return [];
+  }
+}
+
+function persistPendingActivities(account: string, entries: readonly PendingActivity[]) {
+  try {
+    const key = pendingActivitiesKey(account);
+    if (entries.length === 0) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, serializePendingActivityReferences(entries));
+  } catch {
+    // The in-memory overlay remains available when browser storage is blocked or full.
+  }
+}
+
+function pendingActivityFromSnapshot(
+  snapshot: RequestSnapshot,
+  confirmedAt: number,
+): PendingActivity | null {
+  const stage = stageFromJournal(snapshot.state);
+  if ((stage !== 'executed' && stage !== 'refused') || !snapshot.txHash) return null;
+  return {
+    requestId: snapshot.requestId,
+    txHash: snapshot.txHash,
+    outcome: stage === 'executed' ? 'EXECUTED' : 'REFUSED',
+    rule: snapshot.rule ?? (stage === 'executed' ? 'NONE' : 'CUMULATIVE_CAP'),
+    mandateId: snapshot.mandateId,
+    recipient: snapshot.recipient ?? '',
+    attempted: snapshot.attemptedUnits ?? '0',
+    transferred: stage === 'executed' ? (snapshot.attemptedUnits ?? '0') : '0',
+    headroom: snapshot.headroomUnits ?? '0',
+    spentAfter: '0',
+    confirmedAt,
+  };
 }
 
 function randomRequestId() {

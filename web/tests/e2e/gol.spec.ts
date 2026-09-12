@@ -169,6 +169,18 @@ test.describe('mocked provider walkthrough', () => {
     await budget.getByRole('button', { name: /^Continue to wallet/ }).click();
     await expect(page.getByText('On', { exact: true }).first()).toBeVisible(CONFIRMATION);
 
+    // Browser sidebars and narrow windows must not collapse the post-setup workspace.
+    for (const width of [320, 960]) {
+      await page.setViewportSize({ width, height: 720 });
+      await expect(page.getByText('Ready to pay')).toBeVisible();
+      const workspace = await page.getByTestId('dashboard-workspace').boundingBox();
+      expect(workspace?.height).toBeGreaterThan(500);
+    }
+    await page.getByRole('button', { name: /Switch to (dark|light) theme/ }).click();
+    await expect(page.getByText('Ready to pay')).toBeVisible();
+    await page.getByRole('button', { name: /Switch to (dark|light) theme/ }).click();
+    await page.setViewportSize({ width: 1440, height: 900 });
+
     // Withdrawals also accept an owner-selected amount and return only to the owner wallet.
     await expect(page.getByRole('button', { name: 'Withdraw', exact: true }).first()).toBeEnabled(
       CONFIRMATION,

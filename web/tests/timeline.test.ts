@@ -1,6 +1,13 @@
 import type { ActivityRecord } from '@gol/protocol';
 import { describe, expect, it } from 'vitest';
-import { filterTimeline, isIndexed, mergeTimeline, type PendingActivity } from '@/client/timeline';
+import {
+  filterTimeline,
+  isIndexed,
+  mergeTimeline,
+  parsePendingActivityReferences,
+  serializePendingActivityReferences,
+  type PendingActivity,
+} from '@/client/timeline';
 
 const TX = `0x${'ab'.repeat(32)}` as const;
 const REQUEST = `0x${'01'.repeat(32)}` as const;
@@ -81,5 +88,20 @@ describe('on-chain to indexed transition', () => {
 
   it('never lists the same indexed action twice', () => {
     expect(mergeTimeline([indexedRefusal, indexedRefusal], [])).toHaveLength(1);
+  });
+
+  it('round trips a confirmed overlay for recovery after refresh', () => {
+    expect(parsePendingActivityReferences(serializePendingActivityReferences([overlay]))).toEqual([
+      { requestId: overlay.requestId, confirmedAt: overlay.confirmedAt },
+    ]);
+  });
+
+  it('rejects malformed browser storage before journal recovery', () => {
+    expect(parsePendingActivityReferences('{')).toEqual([]);
+    expect(
+      parsePendingActivityReferences(
+        JSON.stringify([{ requestId: 'not-a-request', confirmedAt: Date.now() }]),
+      ),
+    ).toEqual([]);
   });
 });
