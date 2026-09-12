@@ -108,6 +108,7 @@ export type PaymentStage =
 
 export interface RequestSnapshot {
   requestId: string;
+  account: Address;
   state: string;
   recipient: Address | null;
   amountUnits: string | null;

@@ -19,14 +19,57 @@ export interface PendingActivity {
   confirmedAt: number;
 }
 
+export interface PendingActivityReference {
+  requestId: string;
+  confirmedAt: number;
+}
+
 export type TimelineEntry =
   | { kind: 'indexed'; key: string; record: ActivityRecord }
   | { kind: 'pending'; key: string; pending: PendingActivity };
 
 export type TimelineFilter = 'ALL' | 'EXECUTED' | 'REFUSED';
 
+const MAX_PERSISTED_PENDING = 50;
+const hash32 = /^0x[0-9a-f]{64}$/i;
+
 function lower(value: string): string {
   return value.toLowerCase();
+}
+
+/**
+ * Browser storage contains references only. Outcome claims are reconstructed from the
+ * authenticated journal, never trusted from browser-controlled data.
+ */
+export function parsePendingActivityReferences(value: string | null): PendingActivityReference[] {
+  if (!value) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(isPendingActivityReference).slice(0, MAX_PERSISTED_PENDING);
+  } catch {
+    return [];
+  }
+}
+
+export function serializePendingActivityReferences(entries: readonly PendingActivity[]): string {
+  return JSON.stringify(
+    entries
+      .slice(0, MAX_PERSISTED_PENDING)
+      .map(({ requestId, confirmedAt }) => ({ requestId, confirmedAt })),
+  );
+}
+
+function isPendingActivityReference(value: unknown): value is PendingActivityReference {
+  if (!value || typeof value !== 'object') return false;
+  const entry = value as Record<string, unknown>;
+  return (
+    typeof entry.requestId === 'string' &&
+    hash32.test(entry.requestId) &&
+    typeof entry.confirmedAt === 'number' &&
+    Number.isFinite(entry.confirmedAt) &&
+    entry.confirmedAt >= 0
+  );
 }
 
 /**

@@ -191,7 +191,11 @@ export function Dashboard(props: DashboardProps) {
   }, [theme]);
 
   useEffect(() => {
-    if (['executed', 'refused'].includes(props.payment.stage)) setTab('activity');
+    if (['executed', 'refused'].includes(props.payment.stage)) {
+      setTab('activity');
+      // A previous filter must not hide the outcome that just completed.
+      setFilter('ALL');
+    }
   }, [props.payment.stage]);
 
   useEffect(() => {
@@ -292,12 +296,12 @@ export function Dashboard(props: DashboardProps) {
         </div>
       </header>
 
-      <div className="xl:h-[calc(100vh-76px)]">
+      <div className="min-h-[calc(100vh-68px)] sm:min-h-[calc(100vh-76px)] xl:h-[calc(100vh-76px)] xl:min-h-0">
         <ResizablePanelGroup
           id="dashboard-workspace"
           orientation={desktopWorkspace ? 'horizontal' : 'vertical'}
           disabled={!desktopWorkspace}
-          className="gap-4 px-3 py-3 sm:px-5 sm:py-4 xl:gap-0"
+          className="min-h-[calc(100vh-68px)] gap-4 px-3 py-3 sm:min-h-[calc(100vh-76px)] sm:px-5 sm:py-4 xl:min-h-0 xl:gap-0"
         >
           <ResizablePanel
             id="account-panel"
@@ -1007,7 +1011,7 @@ function WorkspaceActivity(props: {
           )}
         </div>
       )}
-      {props.visible.length === 0 ? (
+      {props.visible.length === 0 && props.pendingCount === 0 ? (
         <div className="grid min-h-[300px] place-items-center text-center">
           <div>
             <div className="mx-auto grid size-12 place-items-center rounded-xl bg-muted text-muted-foreground">
