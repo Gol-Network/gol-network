@@ -38,7 +38,9 @@ export function deriveSteps(input: {
   const accountReady = Boolean(account?.accountAddress);
   // An address alone is not enough: an older signer can still be stored while its policy requires
   // migration. The API marks only the current, verified policy revision as linked.
-  const agentReady = Boolean(account?.linked && account.agentAddress);
+  const recipient = account?.recipients[0] ?? null;
+  const recipientReady = Boolean(account?.recipients.length === 1 && recipient?.confirmed);
+  const agentReady = Boolean(account?.linked && account.agentAddress && recipientReady);
   const agentGasReady =
     Boolean(balances) && BigInt(balances!.agentGasWei) >= BigInt(config.minAgentGasWei);
   // A positive payment balance is enough to finish setup. The mandate limit is an authority cap,
@@ -50,7 +52,8 @@ export function deriveSteps(input: {
     Boolean(account?.agentAddress) &&
     account!.activeMandateId !== '0' &&
     account!.mandate?.revoked === false &&
-    account!.mandate.agent.toLowerCase() === account!.agentAddress!.toLowerCase();
+    account!.mandate.agent.toLowerCase() === account!.agentAddress!.toLowerCase() &&
+    recipient?.allowedByActiveMandate === true;
 
   const definitions: Array<{
     id: StepId;
@@ -97,8 +100,8 @@ export function deriveSteps(input: {
           id: 'agent_wallet',
           title: 'Choose who GOL can pay',
           detail: agentReady
-            ? 'GOL is connected to your payment funds.'
-            : 'Approve one recipient for agent payments.',
+            ? 'GOL is connected to the recipient you approved.'
+            : 'Enter and approve one exact recipient for agent payments.',
           complete: agentReady,
           action: 'provision_agent',
           actionLabel: 'Choose recipient',
@@ -108,7 +111,7 @@ export function deriveSteps(input: {
           title: 'Choose who GOL can pay',
           detail: agentReady
             ? 'The payment agent is ready.'
-            : 'Approve one recipient for agent payments.',
+            : 'Enter and approve one exact recipient for agent payments.',
           complete: agentReady,
           action: 'provision_agent',
           actionLabel: 'Choose recipient',

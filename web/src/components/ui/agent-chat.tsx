@@ -25,41 +25,28 @@ import { GolLogo } from '@/components/ui/gol-logo';
 import { TokenIcon } from '@/components/ui/token-icon';
 import { runGolAgent } from '@/client/agui-agent';
 import { extractPreparedAaveReview } from '@/client/aave-transactions';
+import {
+  chatHistoryStorageKey,
+  parseChatHistory,
+  serializeChatHistory,
+  type PersistedChatMessage,
+  type PersistedProtocolAction,
+  type PersistedToolRun,
+} from '@/client/chat-history';
 import { GOL_TOOLS, GOL_TOOL_COUNT } from '@/lib/gol-tool-registry';
 import { cn } from '@/lib/utils';
 import { PAYMENT_STAGES } from '@/client/stages';
 import { formatUsdc } from '@gol/protocol';
 
-type ActionKind = 'aave' | 'mandate' | 'bridge';
-type ProtocolAction = {
-  kind: ActionKind;
-  title: string;
-  asset: string;
-  amount: string;
-  network: string;
-  blocked?: boolean;
-};
-type ToolRun = {
-  id: string;
-  name: string;
-  source: 'aave' | 'gol';
-  state: 'running' | 'complete' | 'failed';
-};
-type ChatMessage = {
-  id: string;
-  role: 'agent' | 'user';
-  text: string;
-  tool?: string | undefined;
-  source?: 'aave' | 'gol' | undefined;
-  result?: unknown;
-  action?: ProtocolAction | undefined;
-  handoff?: Record<string, unknown> | undefined;
-  toolRuns?: ToolRun[] | undefined;
+type ProtocolAction = PersistedProtocolAction;
+type ToolRun = PersistedToolRun;
+type ChatMessage = PersistedChatMessage & {
   streaming?: boolean | undefined;
 };
 
 interface AgentChatProps {
   ownerAddress?: string | null | undefined;
+  recipientLabel: string | null;
   draft: string;
   onDraftChange: (value: string) => void;
   onMandatePrompt: (prompt: string) => void;
@@ -93,28 +80,45 @@ interface AgentChatProps {
   busy?: boolean;
 }
 
-const suggestions = [
-  {
-    label: 'Aave: Best USDC yield',
-    prompt: 'Show me the best USDC supply yield on Aave',
-    icon: AaveLogo,
-  },
-  {
-    label: 'Aave: My position',
-    prompt: 'Review my Aave position and health factor',
-    icon: AaveLogo,
-  },
-  { label: '10 USDC', prompt: 'Pay 10 USDC to Design contractor', icon: GolLogo },
-  { label: '101 USDC', prompt: 'Pay 101 USDC to Design contractor', icon: GolLogo },
-  {
-    label: 'Why refused?',
-    prompt: 'What was this agent refused, and why?',
-    icon: GolLogo,
-  },
-  { label: 'Review payment rules', prompt: 'Review my GOL payment rules', icon: GolLogo },
-];
+function suggestions(recipientLabel: string | null) {
+  const paymentSuggestions = recipientLabel
+    ? [
+        { label: '10 USDC', prompt: `Pay 10 USDC to ${recipientLabel}`, icon: GolLogo },
+        { label: '101 USDC', prompt: `Pay 101 USDC to ${recipientLabel}`, icon: GolLogo },
+      ]
+    : [];
+  return [
+    {
+      label: 'Aave: Best USDC yield',
+      prompt: 'Show me the best USDC supply yield on Aave',
+      icon: AaveLogo,
+    },
+    {
+      label: 'Aave: My position',
+      prompt: 'Review my Aave position and health factor',
+      icon: AaveLogo,
+    },
+    ...paymentSuggestions,
+    {
+      label: 'Why refused?',
+      prompt: 'What was this agent refused, and why?',
+      icon: GolLogo,
+    },
+    { label: 'Review payment rules', prompt: 'Review my GOL payment rules', icon: GolLogo },
+  ];
+}
 
 const GOL_TOOL_NAMES = new Set<string>(GOL_TOOLS.map((tool) => tool.name));
+
+function initialMessages(): ChatMessage[] {
+  return [
+    {
+      id: 'welcome',
+      role: 'agent',
+      text: 'I can make payments within your rule, explain blocked payments, and answer questions from on-chain activity.',
+    },
+  ];
+}
 
 function actionFromPrompt(prompt: string, tool?: string): ProtocolAction | undefined {
   const amount = prompt.match(/\b([0-9]+(?:\.[0-9]+)?)\s*(USDC|GHO|ETH|AAVE)\b/i);
@@ -478,20 +482,56 @@ function ProtocolActionCard({
 }
 
 export function AgentChat(props: AgentChatProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: 'welcome',
-      role: 'agent',
-      text: 'I can make payments within your rule, explain blocked payments, and answer questions from on-chain activity.',
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [toolCount, setToolCount] = useState<number | null>(null);
   const [sending, setSending] = useState(false);
   const [runStatus, setRunStatus] = useState<string | null>(null);
   const [showPaymentStatus, setShowPaymentStatus] = useState(false);
+  const [hydratedHistoryScope, setHydratedHistoryScope] = useState<string | null | undefined>(
+    undefined,
+  );
   const scrollRef = useRef<HTMLDivElement>(null);
   const threadIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const historyScope = props.ownerAddress?.toLowerCase() ?? null;
+  const historyReady = hydratedHistoryScope === historyScope;
+
+  useEffect(() => {
+    setHydratedHistoryScope(undefined);
+    if (!historyScope) {
+      setMessages(initialMessages());
+      threadIdRef.current = null;
+      setHydratedHistoryScope(null);
+      return;
+    }
+
+    try {
+      const restored = parseChatHistory(
+        window.localStorage.getItem(chatHistoryStorageKey(historyScope)),
+      );
+      setMessages(restored.messages.length > 0 ? restored.messages : initialMessages());
+      threadIdRef.current = restored.threadId;
+    } catch {
+      setMessages(initialMessages());
+      threadIdRef.current = null;
+    }
+    setHydratedHistoryScope(historyScope);
+  }, [historyScope]);
+
+  useEffect(() => {
+    if (!historyScope || hydratedHistoryScope !== historyScope) return;
+    const timeout = window.setTimeout(() => {
+      try {
+        window.localStorage.setItem(
+          chatHistoryStorageKey(historyScope),
+          serializeChatHistory(messages, threadIdRef.current),
+        );
+      } catch {
+        // Chat remains usable when browser storage is disabled or full.
+      }
+    }, 150);
+    return () => window.clearTimeout(timeout);
+  }, [historyScope, hydratedHistoryScope, messages]);
 
   useEffect(() => {
     void fetch('/api/aave/mcp')
@@ -535,7 +575,7 @@ export function AgentChat(props: AgentChatProps) {
   const submit = async (event?: FormEvent) => {
     event?.preventDefault();
     const prompt = props.draft.trim();
-    if (!prompt || sending) return;
+    if (!prompt || sending || !historyReady) return;
     const isPaymentPrompt = /^pay\s+/i.test(prompt);
     setShowPaymentStatus(isPaymentPrompt);
     props.onDraftChange('');
@@ -669,103 +709,112 @@ export function AgentChat(props: AgentChatProps) {
       </header>
 
       <div ref={scrollRef} className="min-h-0 flex-1 space-y-6 overflow-y-auto px-6 py-7">
-        {messages.map((message) => (
-          <div
-            key={message.id}
-            className={cn('flex items-start gap-3', message.role === 'user' && 'justify-end')}
-          >
-            {message.role === 'agent' && (
-              <img src="/gol-mark-blue.svg" alt="" className="mt-1 size-9 shrink-0" />
-            )}
+        {!historyReady && (
+          <div className="flex min-h-48 items-center justify-center gap-2 text-xs text-muted-foreground">
+            <LoaderCircle className="size-4 animate-spin" /> Restoring conversation
+          </div>
+        )}
+        {historyReady &&
+          messages.map((message) => (
             <div
-              className={cn(
-                'max-w-[88%]',
-                message.role === 'agent' &&
-                  'rounded-xl rounded-tl-md border border-border bg-muted px-5 py-4',
-                message.role === 'user' &&
-                  'rounded-xl rounded-br-md bg-primary px-5 py-3 text-sm text-primary-foreground',
-              )}
+              key={message.id}
+              className={cn('flex items-start gap-3', message.role === 'user' && 'justify-end')}
             >
-              <p
+              {message.role === 'agent' && (
+                <img src="/gol-mark-blue.svg" alt="" className="mt-1 size-9 shrink-0" />
+              )}
+              <div
                 className={cn(
-                  'text-sm leading-copy',
-                  message.role === 'agent' ? 'text-foreground' : 'text-primary-foreground',
+                  'max-w-[88%]',
+                  message.role === 'agent' &&
+                    'rounded-xl rounded-tl-md border border-border bg-muted px-5 py-4',
+                  message.role === 'user' &&
+                    'rounded-xl rounded-br-md bg-primary px-5 py-3 text-sm text-primary-foreground',
                 )}
               >
-                {message.text}
-                {message.streaming ? (
-                  <span
-                    aria-hidden
-                    className="ml-1 inline-block h-[1em] w-0.5 translate-y-[2px] animate-pulse bg-current"
-                  />
-                ) : null}
-              </p>
-              {message.toolRuns?.length ? (
-                <div className="mt-3 space-y-1.5" aria-label="Agent tool activity">
-                  {message.toolRuns.map((run) => (
-                    <div
-                      key={run.id}
-                      className="flex items-center gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-[10px] text-muted-foreground"
-                    >
-                      {run.source === 'aave' ? (
-                        <AaveLogo className="size-4 shrink-0" />
-                      ) : (
-                        <GolLogo className="size-4 shrink-0" />
-                      )}
-                      <span className="min-w-0 flex-1 truncate">{formatToolName(run.name)}</span>
-                      <span
-                        className={cn(
-                          'flex shrink-0 items-center gap-1',
-                          run.state === 'complete' && 'text-success',
-                          run.state === 'failed' && 'text-destructive',
-                        )}
+                <p
+                  className={cn(
+                    'text-sm leading-copy',
+                    message.role === 'agent' ? 'text-foreground' : 'text-primary-foreground',
+                  )}
+                >
+                  {message.text}
+                  {message.streaming ? (
+                    <span
+                      aria-hidden
+                      className="ml-1 inline-block h-[1em] w-0.5 translate-y-[2px] animate-pulse bg-current"
+                    />
+                  ) : null}
+                </p>
+                {message.toolRuns?.length ? (
+                  <div className="mt-3 space-y-1.5" aria-label="Agent tool activity">
+                    {message.toolRuns.map((run) => (
+                      <div
+                        key={run.id}
+                        className="flex items-center gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-[10px] text-muted-foreground"
                       >
-                        {run.state === 'running' ? (
-                          <LoaderCircle className="size-3 animate-spin" />
-                        ) : run.state === 'complete' ? (
-                          <CheckCircle2 className="size-3" />
+                        {run.source === 'aave' ? (
+                          <AaveLogo className="size-4 shrink-0" />
                         ) : (
-                          <CircleAlert className="size-3" />
+                          <GolLogo className="size-4 shrink-0" />
                         )}
-                        {run.state === 'running'
-                          ? 'Running'
-                          : run.state === 'complete'
-                            ? 'Complete'
-                            : 'Failed'}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-              {message.source === 'aave' && message.tool && message.result !== undefined && (
-                <AaveResultCard tool={message.tool} result={message.result} />
-              )}
-              {message.action && (
-                <ProtocolActionCard
-                  action={message.action}
-                  onReview={() => {
-                    if (message.source === 'aave' && message.result !== undefined) {
-                      props.onAaveReview(message.result, message.action!);
-                      return;
-                    }
-                    const handoffTool = message.handoff?.tool;
-                    const handoffArguments = message.handoff?.arguments;
-                    if (typeof handoffTool === 'string' && handoffTool !== 'preview_instruction') {
-                      props.onGolToolReview(
-                        handoffTool,
-                        handoffArguments && typeof handoffArguments === 'object'
-                          ? (handoffArguments as Record<string, unknown>)
-                          : {},
-                      );
-                      return;
-                    }
-                    props.onOpenActions();
-                  }}
-                />
-              )}
+                        <span className="min-w-0 flex-1 truncate">{formatToolName(run.name)}</span>
+                        <span
+                          className={cn(
+                            'flex shrink-0 items-center gap-1',
+                            run.state === 'complete' && 'text-success',
+                            run.state === 'failed' && 'text-destructive',
+                          )}
+                        >
+                          {run.state === 'running' ? (
+                            <LoaderCircle className="size-3 animate-spin" />
+                          ) : run.state === 'complete' ? (
+                            <CheckCircle2 className="size-3" />
+                          ) : (
+                            <CircleAlert className="size-3" />
+                          )}
+                          {run.state === 'running'
+                            ? 'Running'
+                            : run.state === 'complete'
+                              ? 'Complete'
+                              : 'Failed'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                {message.source === 'aave' && message.tool && message.result !== undefined && (
+                  <AaveResultCard tool={message.tool} result={message.result} />
+                )}
+                {message.action && (
+                  <ProtocolActionCard
+                    action={message.action}
+                    onReview={() => {
+                      if (message.source === 'aave' && message.result !== undefined) {
+                        props.onAaveReview(message.result, message.action!);
+                        return;
+                      }
+                      const handoffTool = message.handoff?.tool;
+                      const handoffArguments = message.handoff?.arguments;
+                      if (
+                        typeof handoffTool === 'string' &&
+                        handoffTool !== 'preview_instruction'
+                      ) {
+                        props.onGolToolReview(
+                          handoffTool,
+                          handoffArguments && typeof handoffArguments === 'object'
+                            ? (handoffArguments as Record<string, unknown>)
+                            : {},
+                        );
+                        return;
+                      }
+                      props.onOpenActions();
+                    }}
+                  />
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
 
         {props.preview && (
           <Card
@@ -877,7 +926,7 @@ export function AgentChat(props: AgentChatProps) {
 
       <div className="border-t border-border p-4">
         <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
-          {suggestions.map(({ label, prompt, icon: Icon }) => (
+          {suggestions(props.recipientLabel).map(({ label, prompt, icon: Icon }) => (
             <Button
               key={label}
               type="button"
@@ -921,7 +970,7 @@ export function AgentChat(props: AgentChatProps) {
                   type={sending ? 'button' : 'submit'}
                   aria-label={sending ? 'Stop agent run' : 'Run agent'}
                   onClick={sending ? () => abortRef.current?.abort('stopped by user') : undefined}
-                  disabled={sending ? false : !props.draft.trim() || props.busy}
+                  disabled={sending ? false : !historyReady || !props.draft.trim() || props.busy}
                   className="size-11 rounded-full"
                 >
                   {sending ? <Square size={15} fill="currentColor" /> : <Send size={16} />}

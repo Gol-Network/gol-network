@@ -9,6 +9,7 @@ async function completeFixtureSetup(page: Page) {
   });
 
   await page.getByRole('button', { name: /Choose recipient/ }).click();
+  await page.getByLabel('Recipient name').fill('Design contractor');
   await page.getByLabel('Recipient wallet address').fill(RECIPIENT);
   await page.getByRole('button', { name: /Create payment agent/ }).click();
   await expect(page.getByRole('heading', { name: 'Add agent network fees' })).toBeVisible({

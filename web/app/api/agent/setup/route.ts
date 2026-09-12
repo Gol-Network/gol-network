@@ -44,13 +44,6 @@ export async function POST(request: Request) {
       if (String(existingRow.account_address).trim().toLowerCase() !== body.account.toLowerCase()) {
         throw new HttpError(409, 'ACCOUNT_ALREADY_LINKED');
       }
-      const existingProvider = String(existingRow.signer_provider ?? 'privy');
-      if (
-        existingProvider === 'aws_kms' ||
-        String(existingRow.policy_version ?? '') === AGENT_POLICY_REVISION
-      ) {
-        return Response.json(agentResponse(existingRow));
-      }
     }
 
     const { server } = runtimeConfig();
@@ -80,6 +73,16 @@ export async function POST(request: Request) {
     );
     if (!ownsWallet) throw new HttpError(403, 'PRIVY_WALLET_MISMATCH');
 
+    const existingProvider = String(existingRow?.signer_provider ?? 'privy');
+    if (
+      existingRow &&
+      (existingProvider === 'aws_kms' ||
+        String(existingRow.policy_version ?? '') === AGENT_POLICY_REVISION)
+    ) {
+      await replaceRecipient(body.account, body.recipient, body.recipientLabel);
+      return Response.json(agentResponse(existingRow));
+    }
+
     if (server.agentSignerProvider === 'aws_kms') {
       const keyArn = server.awsKmsSignerKeyArn;
       const region = server.awsKmsSignerRegion;
@@ -97,11 +100,7 @@ export async function POST(request: Request) {
          RETURNING *`,
         [session.subject, body.ownerAddress, body.account, signerAddress, keyArn, region],
       );
-      await pool.query(
-        `INSERT INTO recipients (account_address, address, label) VALUES ($1, $2, $3)
-         ON CONFLICT (account_address, address) DO UPDATE SET label = EXCLUDED.label`,
-        [body.account, body.recipient, body.recipientLabel],
-      );
+      await replaceRecipient(body.account, body.recipient, body.recipientLabel);
       return Response.json(agentResponse(inserted.rows[0]), { status: 201 });
     }
 
@@ -158,15 +157,25 @@ export async function POST(request: Request) {
             AGENT_POLICY_REVISION,
           ],
         );
-    await pool.query(
-      `INSERT INTO recipients (account_address, address, label) VALUES ($1, $2, $3)
-       ON CONFLICT (account_address, address) DO UPDATE SET label = EXCLUDED.label`,
-      [body.account, body.recipient, body.recipientLabel],
-    );
+    await replaceRecipient(body.account, body.recipient, body.recipientLabel);
     return Response.json(agentResponse(inserted.rows[0]), { status: 201 });
   } catch (error) {
     return errorResponse(error);
   }
+}
+
+async function replaceRecipient(account: string, recipient: string, label: string) {
+  await pool.query(
+    `WITH removed AS (
+       DELETE FROM recipients
+       WHERE lower(account_address) = lower($1) AND lower(address) <> lower($2)
+     )
+     INSERT INTO recipients (account_address, address, label, confirmed_at)
+     VALUES ($1, $2, $3, now())
+     ON CONFLICT (account_address, address)
+     DO UPDATE SET label = EXCLUDED.label, confirmed_at = EXCLUDED.confirmed_at`,
+    [account, recipient, label],
+  );
 }
 
 function agentResponse(row: Record<string, unknown>) {

@@ -26,8 +26,6 @@ export interface PublicConfig {
   rpcUrl: string;
   explorerUrl: string;
   faucetUrl: string | null;
-  /** Approved-recipient label used by the demonstration instructions. */
-  recipientLabel: string;
   /** Exact USDC balance the GOL account is funded to, in six-decimal units. */
   accountTargetUnits: string;
   /** Owner-to-agent gas top-up amount, in six-decimal USDC units. */

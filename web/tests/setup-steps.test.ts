@@ -18,7 +18,6 @@ const config: PublicConfig = {
   rpcUrl: 'https://rpc.testnet.arc.network',
   explorerUrl: 'https://testnet.arcscan.app',
   faucetUrl: 'https://faucet.circle.com',
-  recipientLabel: 'Design contractor',
   accountTargetUnits: '100000000',
   agentGasTopUpUnits: '1000000',
   minOwnerGasWei: '1',
@@ -33,7 +32,14 @@ function snapshot(linked: boolean): AccountSnapshot {
     linked,
     policyId: 'policy-id',
     policyDisclosure: null,
-    recipients: [],
+    recipients: [
+      {
+        address: address('6'),
+        label: 'Design contractor',
+        confirmed: true,
+        allowedByActiveMandate: true,
+      },
+    ],
     balances: {
       ownerUsdcUnits: '1000000',
       accountUsdcUnits: '1000000',
@@ -64,6 +70,27 @@ describe('setup step derivation', () => {
   it('accepts the agent only after the backend verifies the current policy revision', () => {
     const steps = deriveSteps({ config, authenticated: true, account: snapshot(true) });
     expect(steps.find((step) => step.id === 'agent_wallet')?.status).toBe('complete');
+  });
+
+  it('requires explicit recipient confirmation before the agent becomes ready', () => {
+    const account = snapshot(true);
+    account.recipients[0]!.confirmed = false;
+    const steps = deriveSteps({ config, authenticated: true, account });
+    expect(steps.find((step) => step.id === 'agent_wallet')).toMatchObject({
+      status: 'current',
+      action: 'provision_agent',
+    });
+  });
+
+  it('requires a new mandate when the confirmed recipient is not in its allowlist', () => {
+    const account = snapshot(true);
+    account.balances.agentGasWei = '1';
+    account.recipients[0]!.allowedByActiveMandate = false;
+    const steps = deriveSteps({ config, authenticated: true, account });
+    expect(steps.find((step) => step.id === 'mandate')).toMatchObject({
+      status: 'current',
+      action: 'sign_mandate',
+    });
   });
 
   it('requires a new mandate after the restricted agent is rotated', () => {

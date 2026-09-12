@@ -19,7 +19,6 @@ import type {
 const OWNER = '0xC0FFEe0000000000000000000000000000000001' as Address;
 const ACCOUNT = '0xACc0170000000000000000000000000000000002' as Address;
 const AGENT = '0xA6e1700000000000000000000000000000000003' as Address;
-const RECIPIENT = '0xbEef000000000000000000000000000000000004' as Address;
 
 /** Deliberately short so the mocked flow passes through every state without stalling a demo. */
 const TIMINGS = {
@@ -64,9 +63,11 @@ export function createFixtureBackend(config: PublicConfig): GolBackend {
   let nonce = 1;
   let accountCreated = false;
   let agentProvisioned = false;
+  let approvedRecipient: { address: Address; label: string } | null = null;
   let agentGasWei = 0n;
   let accountUsdc = 0n;
   let activeMandateId = '0';
+  let mandateRecipient: Address | null = null;
   let spent = 0n;
   let mandate: AccountSnapshot['mandate'] = null;
   let sequence = 0;
@@ -107,7 +108,17 @@ export function createFixtureBackend(config: PublicConfig): GolBackend {
             revocation: 'Revoke the mandate from the owner wallet.',
           }
         : null,
-      recipients: agentProvisioned ? [{ address: RECIPIENT, label: config.recipientLabel }] : [],
+      recipients:
+        agentProvisioned && approvedRecipient
+          ? [
+              {
+                ...approvedRecipient,
+                confirmed: true,
+                allowedByActiveMandate:
+                  mandateRecipient?.toLowerCase() === approvedRecipient.address.toLowerCase(),
+              },
+            ]
+          : [],
       balances: {
         ownerUsdcUnits: (250n * 10n ** 6n).toString(),
         accountUsdcUnits: accountUsdc.toString(),
@@ -129,7 +140,7 @@ export function createFixtureBackend(config: PublicConfig): GolBackend {
       requestId: request.requestId as `0x${string}`,
       mandateId: request.mandateId,
       agent: AGENT,
-      recipient: RECIPIENT,
+      recipient: request.recipient ?? approvedRecipient?.address ?? ACCOUNT,
       outcome: executed ? 'EXECUTED' : 'REFUSED',
       rule: executed ? 'NONE' : 'CUMULATIVE_CAP',
       reason: executed ? 'Payment executed' : 'Cumulative cap exceeded',
@@ -161,8 +172,9 @@ export function createFixtureBackend(config: PublicConfig): GolBackend {
       });
     },
 
-    async provisionAgent() {
+    async provisionAgent(_account, _owner, recipient, label) {
       await pause(TIMINGS.provisioning);
+      approvedRecipient = { address: recipient, label };
       agentProvisioned = true;
     },
 
@@ -182,6 +194,7 @@ export function createFixtureBackend(config: PublicConfig): GolBackend {
     async signMandate(_account, draft: MandateDraft, report) {
       await ownerTransaction(report, () => {
         activeMandateId = '1';
+        mandateRecipient = draft.recipient;
         spent = 0n;
         mandate = {
           agent: draft.agent,
@@ -198,6 +211,7 @@ export function createFixtureBackend(config: PublicConfig): GolBackend {
       await ownerTransaction(report, () => {
         if (mandate) mandate = { ...mandate, revoked: true };
         activeMandateId = '0';
+        mandateRecipient = null;
       });
     },
 
@@ -321,9 +335,7 @@ export function createFixtureBackend(config: PublicConfig): GolBackend {
     },
 
     async submitInstruction(_account, requestId, text, mandateId) {
-      const parsed = await parseInstruction(text, [
-        { address: RECIPIENT, label: config.recipientLabel },
-      ]);
+      const parsed = await parseInstruction(text, approvedRecipient ? [approvedRecipient] : []);
       if (parsed.kind === 'clarification') {
         requests.set(requestId, {
           requestId,

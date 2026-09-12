@@ -84,6 +84,7 @@ test.describe('mocked provider walkthrough', () => {
 
     await completeStep(page, /^Create payment account/);
     await page.getByRole('button', { name: /Choose recipient/ }).click();
+    await page.getByLabel('Recipient name').fill('Design contractor');
     await page.getByLabel('Recipient wallet address').fill(RECIPIENT);
     await page.getByRole('button', { name: /Create payment agent/ }).click();
     await page.getByRole('button', { name: /^Add 1 USDC fee reserve/ }).click();
@@ -141,6 +142,12 @@ test.describe('mocked provider walkthrough', () => {
     const consent = page.getByTestId('agent-consent');
     await expect(consent).toContainText('payment funds only');
     await expect(consent).toContainText('your personal wallet');
+    await expect(page.getByLabel('Recipient name')).toHaveValue('');
+    await expect(page.getByLabel('Recipient wallet address')).toHaveValue('');
+    await expect(
+      page.getByRole('button', { name: /Create payment agent|Connect payment agent/ }),
+    ).toBeDisabled();
+    await page.getByLabel('Recipient name').fill('Design contractor');
     await page.getByLabel('Recipient wallet address').fill(RECIPIENT);
     await page.getByRole('button', { name: /Create payment agent|Connect payment agent/ }).click();
 
@@ -202,6 +209,7 @@ test.describe('mocked provider walkthrough', () => {
     await completeStep(page, /^Continue to wallet/);
 
     // The 10 USDC payment resolves before submission, then reaches a confirmed outcome.
+    await page.getByRole('button', { name: '10 USDC' }).click();
     await page.getByRole('button', { name: /^Run agent/ }).click();
     const preview = page.getByTestId('instruction-preview');
     await expect(preview).toContainText('10 USDC');

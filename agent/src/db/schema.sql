@@ -20,9 +20,12 @@ CREATE TABLE IF NOT EXISTS recipients (
   account_address char(42) NOT NULL REFERENCES account_links(account_address) ON DELETE CASCADE,
   address char(42) NOT NULL,
   label varchar(100) NOT NULL,
+  confirmed_at timestamptz,
   PRIMARY KEY (account_address, address),
   UNIQUE (account_address, label)
 );
+
+ALTER TABLE recipients ADD COLUMN IF NOT EXISTS confirmed_at timestamptz;
 
 CREATE TABLE IF NOT EXISTS requests (
   id uuid PRIMARY KEY,

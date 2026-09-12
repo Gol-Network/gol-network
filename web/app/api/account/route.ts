@@ -56,7 +56,10 @@ export async function GET(request: Request) {
         client.getBalance({ address: ownerAddress }),
         client.getBalance({ address: agentAddress }),
         pool.query(
-          'SELECT address, label FROM recipients WHERE lower(account_address) = lower($1) ORDER BY label',
+          `SELECT address, label, confirmed_at
+           FROM recipients
+           WHERE lower(account_address) = lower($1)
+           ORDER BY label`,
           [accountAddress],
         ),
       ]);
@@ -73,6 +76,26 @@ export async function GET(request: Request) {
             functionName: 'getMandate',
             args: [activeMandateId],
           });
+    const recipientViews = await Promise.all(
+      recipients.rows.map(async (recipient: Record<string, unknown>) => {
+        const recipientAddress = addressSchema.parse(String(recipient.address).trim());
+        const allowedByActiveMandate =
+          activeMandateId !== 0n
+            ? await client.readContract({
+                address: accountAddress,
+                abi: golAccountAbi,
+                functionName: 'isRecipientAllowed',
+                args: [activeMandateId, recipientAddress],
+              })
+            : false;
+        return {
+          address: recipientAddress,
+          label: String(recipient.label),
+          confirmed: recipient.confirmed_at !== null,
+          allowedByActiveMandate,
+        };
+      }),
+    );
 
     return NextResponse.json({
       state: 'ready',
@@ -109,10 +132,7 @@ export async function GET(request: Request) {
         ownerGasWei: ownerGas.toString(),
         agentGasWei: agentGas.toString(),
       },
-      recipients: recipients.rows.map((recipient: Record<string, unknown>) => ({
-        address: String(recipient.address).trim(),
-        label: String(recipient.label),
-      })),
+      recipients: recipientViews,
       balanceUnits: accountUsdc.toString(),
       activeMandateId: activeMandateId.toString(),
       mandate: mandate

@@ -47,6 +47,34 @@ describe('server routes', () => {
     await expect(response.json()).resolves.toEqual({ error: 'ACCOUNT_SCOPE_MISMATCH' });
   });
 
+  it('rejects instructions until the owner explicitly confirms a recipient', async () => {
+    query.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [
+        {
+          account_address: '0x1111111111111111111111111111111111111111',
+          recipient_confirmed: false,
+        },
+      ],
+    });
+    const { POST } = await import('../app/api/instructions/route');
+    const response = await POST(
+      new Request('https://gol.test/api/instructions', {
+        method: 'POST',
+        body: JSON.stringify({
+          account: '0x1111111111111111111111111111111111111111',
+          mandateId: '1',
+          requestId: `0x${'3'.repeat(64)}`,
+          text: 'Pay 1 USDC to vendor',
+        }),
+      }),
+    );
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: 'RECIPIENT_CONFIRMATION_REQUIRED',
+    });
+  });
+
   it('does not expose another user request', async () => {
     const { GET } = await import('../app/api/requests/[requestId]/route');
     const response = await GET(new Request('https://gol.test/api/requests/id'), {

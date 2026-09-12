@@ -40,7 +40,8 @@ test.describe('public visual landing page', () => {
     );
 
     expect(requests.some((url) => new URL(url).pathname.startsWith('/api/'))).toBe(false);
-    expect(requests.every((url) => new URL(url).origin === 'http://127.0.0.1:3100')).toBe(true);
+    const applicationOrigin = new URL(page.url()).origin;
+    expect(requests.every((url) => new URL(url).origin === applicationOrigin)).toBe(true);
   });
 
   test('renders its complete default consequence without JavaScript', async ({

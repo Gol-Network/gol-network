@@ -10,6 +10,7 @@ export const golAccountAbi = parseAbi([
   'function pay(uint256 mandateId,bytes32 requestId,address recipient,uint256 amount) returns (uint8 outcome)',
   'function getMandate(uint256 mandateId) view returns ((address agent,uint256 perPaymentCap,uint256 cumulativeCap,uint256 spent,uint64 expiresAt,bool revoked,bool exists))',
   'function getRecipients(uint256 mandateId) view returns (address[])',
+  'function isRecipientAllowed(uint256 mandateId,address recipient) view returns (bool)',
   'function getRequest(uint256 mandateId,bytes32 requestId) view returns ((bytes32 payloadHash,address agent,address recipient,uint256 attempted,uint256 headroom,uint256 spentAfter,uint8 outcome,uint8 rule,string reason,uint64 recordedAt,uint256 sequence))',
   'function remaining(uint256 mandateId) view returns (uint256)',
   'event MandateCreated(uint256 indexed mandateId,address indexed agent,uint256 perPaymentCap,uint256 cumulativeCap,uint64 expiresAt,address[] recipients)',
