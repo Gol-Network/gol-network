@@ -9,6 +9,17 @@ test('capture labeled fixture states', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/');
+  await expect(
+    page.getByRole('heading', {
+      name: 'Agents can act. Your limit still decides.',
+    }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: '../assets/screenshots/00-local-landing.png',
+    fullPage: true,
+  });
+
+  await page.goto('/app');
   await expect(page.getByRole('heading', { name: 'GOL Network' })).toBeVisible();
   await page.getByRole('button', { name: 'Light', exact: true }).click();
   await page.screenshot({

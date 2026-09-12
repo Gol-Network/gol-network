@@ -28,6 +28,7 @@ import { TokenIcon } from '@/components/ui/token-icon';
 export const metadata: Metadata = {
   title: 'GOL tool cards',
   description: 'Static preview gallery for GOL Agent tool and transaction cards',
+  robots: { index: false, follow: false },
 };
 
 type ToolCardProps = {
@@ -1128,7 +1129,7 @@ export default async function PreviewPage({
             <Badge variant="warning">Fixture data</Badge>
             <Button asChild variant="outline" size="sm">
               <a href="/">
-                <ArrowLeft size={14} /> Back to GOL
+                <ArrowLeft size={14} /> GOL home
               </a>
             </Button>
           </div>

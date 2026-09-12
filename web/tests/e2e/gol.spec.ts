@@ -19,7 +19,7 @@ test.describe('mocked provider walkthrough', () => {
       if (!window.localStorage.getItem('gol-theme'))
         window.localStorage.setItem('gol-theme', 'dark');
     });
-    await page.goto('/');
+    await page.goto('/app');
     await page.getByRole('button', { name: 'Open fixture demo', exact: true }).click();
     const shell = page.locator('main');
 
@@ -33,7 +33,7 @@ test.describe('mocked provider walkthrough', () => {
 
   test('reviews and executes all four owner money actions', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto('/');
+    await page.goto('/app');
     await page.getByRole('button', { name: 'Open fixture demo', exact: true }).click();
 
     await page.getByRole('button', { name: 'Actions', exact: true }).click();
@@ -108,7 +108,7 @@ test.describe('mocked provider walkthrough', () => {
     page,
   }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto('/');
+    await page.goto('/app');
 
     // Signed-out users see only the authentication gate.
     await expect(page.getByRole('heading', { name: 'GOL Network' })).toBeVisible();
