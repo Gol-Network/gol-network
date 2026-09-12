@@ -23,8 +23,8 @@ export function TabNav() {
       className="sticky top-0 z-40 border-b border-border bg-background/90 backdrop-blur-sm"
       aria-label="Prototype experiences"
     >
-      <div className="mx-auto flex h-12 max-w-[1440px] items-center gap-5 px-5 sm:px-8 lg:px-[54px]">
-        <span className="text-xs font-extrabold tracking-[0.14em]">GOL</span>
+      <div className="mx-auto flex h-12 max-w-[1440px] items-center gap-3 px-4 sm:gap-5 sm:px-8 lg:px-[54px]">
+        <span className="font-pixel-wordmark shrink-0 text-[10px] sm:text-xs">GOL Network</span>
         <div className="flex gap-1">
           {TABS.map((tab) => {
             const selected = tab.match(pathname);

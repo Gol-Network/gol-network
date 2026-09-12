@@ -17,11 +17,11 @@ export function LandingHeader() {
         <div className="mx-auto flex h-16 max-w-7xl items-center gap-4 px-5 sm:px-8">
           <Link
             href="/"
-            className="flex min-h-11 items-center gap-3 rounded-md font-semibold tracking-tight outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label="Gol home"
+            className="flex min-h-11 shrink-0 items-center gap-2 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring sm:gap-3"
+            aria-label="Gol Network home"
           >
             <GolLogo className="size-7" />
-            <span>GOL</span>
+            <span className="font-pixel-wordmark text-xs leading-none sm:text-sm">GOL Network</span>
           </Link>
           <nav className="mx-auto hidden items-center gap-6 lg:flex" aria-label="Landing page">
             {landingNavItems.map((item) => (

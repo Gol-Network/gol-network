@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
 const RECIPIENT = '0xbEef000000000000000000000000000000000004';
+const SECOND_RECIPIENT = '0xCAfE000000000000000000000000000000000005';
 const CONFIRMATION = { timeout: 30_000 };
 
 async function completeStep(page: Page, name: RegExp) {
@@ -22,6 +23,9 @@ test.describe('mocked provider walkthrough', () => {
     await page.goto('/app');
     await page.getByRole('button', { name: 'Open fixture demo', exact: true }).click();
     const shell = page.locator('main');
+    const wordmark = page.locator('header').getByText('GOL Network', { exact: true }).first();
+    await expect(wordmark).toBeVisible();
+    await expect(wordmark).toHaveClass(/font-pixel-wordmark/);
 
     await expect(shell).toHaveClass(/theme-dark/);
     await page.getByRole('button', { name: 'Switch to light theme' }).click();
@@ -105,6 +109,49 @@ test.describe('mocked provider walkthrough', () => {
     expect(box!.x + box!.width).toBeLessThanOrEqual(320);
   });
 
+  test('lets the owner explicitly allow payments to any exact address', async ({ page }) => {
+    await page.goto('/app');
+    await page.getByRole('button', { name: 'Open fixture demo', exact: true }).click();
+    await completeStep(page, /^Create payment account/);
+    await page.getByRole('button', { name: /Choose recipient/ }).click();
+
+    const consent = page.getByTestId('agent-consent');
+    await consent.getByRole('button', { name: 'Allow all', exact: true }).click();
+    await expect(consent).toContainText('Any destination is permitted');
+    await expect(page.getByLabel('Recipient name')).not.toBeVisible();
+    await expect(page.getByLabel('Recipient wallet address')).not.toBeVisible();
+    await expect(consent.getByRole('button', { name: /Create payment agent/ })).toBeEnabled();
+    await consent.getByRole('button', { name: /Create payment agent/ }).click();
+
+    await expect(
+      page
+        .getByRole('button', { name: /^Add 1 USDC fee reserve/ })
+        .or(page.getByRole('button', { name: /^Set payment budget/ })),
+    ).toBeVisible(CONFIRMATION);
+  });
+
+  test('saves multiple specific recipients in one policy update', async ({ page }) => {
+    await page.goto('/app');
+    await page.getByRole('button', { name: 'Open fixture demo', exact: true }).click();
+    await completeStep(page, /^Create payment account/);
+    await page.getByRole('button', { name: /Choose recipient/ }).click();
+
+    const consent = page.getByTestId('agent-consent');
+    await consent.getByLabel('Recipient name', { exact: true }).fill('Design contractor');
+    await consent.getByLabel('Recipient wallet address', { exact: true }).fill(RECIPIENT);
+    await consent.getByRole('button', { name: 'Add address' }).click();
+    await consent.getByLabel('Recipient name 2').fill('Research contractor');
+    await consent.getByLabel('Recipient wallet address 2').fill(SECOND_RECIPIENT);
+    await expect(consent).toContainText('2/20');
+    await consent.getByRole('button', { name: /Create payment agent/ }).click();
+
+    await expect(
+      page
+        .getByRole('button', { name: /^Add 1 USDC fee reserve/ })
+        .or(page.getByRole('button', { name: /^Set payment budget/ })),
+    ).toBeVisible(CONFIRMATION);
+  });
+
   test('completes setup, executes 10, records a 101 refusal, indexes both, and cites them', async ({
     page,
   }) => {
@@ -174,25 +221,25 @@ test.describe('mocked provider walkthrough', () => {
     await budget.getByLabel('Maximum per payment').fill('90');
     await budget.getByLabel('Total allowed for 7 days').fill('100');
     await budget.getByRole('button', { name: /^Continue to wallet/ }).click();
-    await expect(page.getByText('On', { exact: true }).first()).toBeVisible(CONFIRMATION);
+    await expect(page.getByRole('heading', { name: 'Set up agent payments' })).toBeVisible();
+    await expect(page.getByText('Complete both wallet approvals')).toBeVisible();
+    await expect(page.getByTestId('dashboard-workspace')).toBeVisible(CONFIRMATION);
 
     // The account address exists before provisioning, but indexed activity is journal-authorized
     // only after the link is created. Linking must retry the initial ACCOUNT_NOT_FOUND load even
     // though the contract address itself did not change.
     await page.getByRole('tab', { name: 'Activity', exact: true }).click();
-    await expect(page.getByText('CURRENT', { exact: true })).toBeVisible(CONFIRMATION);
-    await expect(page.getByText(/Indexed through block/)).toBeVisible(CONFIRMATION);
+    await expect(page.getByRole('heading', { name: 'Indexed activity' })).toBeVisible(CONFIRMATION);
     await page.getByRole('tab', { name: 'Overview', exact: true }).click();
 
     // Browser sidebars and narrow windows must not collapse the post-setup workspace.
     for (const width of [320, 960]) {
       await page.setViewportSize({ width, height: 720 });
-      await expect(page.getByText('Ready to pay')).toBeVisible();
       const workspace = await page.getByTestId('dashboard-workspace').boundingBox();
       expect(workspace?.height).toBeGreaterThan(500);
     }
     await page.getByRole('button', { name: /Switch to (dark|light) theme/ }).click();
-    await expect(page.getByText('Ready to pay')).toBeVisible();
+    await expect(page.getByTestId('dashboard-workspace')).toBeVisible();
     await page.getByRole('button', { name: /Switch to (dark|light) theme/ }).click();
     await page.setViewportSize({ width: 1440, height: 900 });
 
@@ -234,12 +281,14 @@ test.describe('mocked provider walkthrough', () => {
     await page.getByRole('button', { name: /^Run agent/ }).click();
     const refusedPreview = page.getByTestId('instruction-preview');
     await expect(refusedPreview).toContainText('101 USDC');
+    await expect(page.getByRole('button', { name: 'Open review' })).not.toBeVisible();
     await refusedPreview.getByRole('button', { name: /^Send payment/ }).click();
-    await expect(page.getByTestId('payment-stage')).toContainText('REFUSED', CONFIRMATION);
+    await expect(page.getByTestId('payment-stage')).toContainText('Payment refused', CONFIRMATION);
     await expect(page.getByTestId('payment-stage')).toContainText(
-      'The transaction succeeded on-chain and the account contract refused the payment.',
+      '101 USDC is above your 100 USDC per-payment limit.',
     );
-    await expect(page.getByTestId('payment-stage')).toContainText('90 USDC of headroom remained.');
+    await expect(page.getByTestId('payment-stage')).toContainText('No USDC sent');
+    await expect(page.getByTestId('payment-stage')).toContainText('Total limit left 90 USDC');
     await expect(
       page.getByTestId('activity-timeline').locator('li[data-pending="true"]'),
     ).toHaveCount(1);

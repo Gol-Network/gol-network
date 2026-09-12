@@ -1,4 +1,9 @@
-import { AuthenticationError, PrivyClient, PermissionDeniedError } from '@privy-io/node';
+import {
+  AuthenticationError,
+  NotFoundError,
+  PrivyClient,
+  PermissionDeniedError,
+} from '@privy-io/node';
 import { ARC_TESTNET_CAIP2, addressSchema, type Address, type Hex32 } from '@gol/protocol';
 import { getAddress, keccak256, recoverTransactionAddress, toHex } from 'viem';
 import {
@@ -180,6 +185,12 @@ export class PrivyTransactionSigner implements AgentSigner {
 }
 
 export function classifyPrivySignerError(error: unknown): unknown {
+  if (error instanceof NotFoundError) {
+    return new SignerConfigurationError(
+      'PRIVY_WALLET_NOT_FOUND',
+      'The configured Privy agent wallet no longer exists',
+    );
+  }
   if (error instanceof PermissionDeniedError) {
     return new SignerPolicyError('Privy policy denied request');
   }

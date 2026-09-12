@@ -11,6 +11,7 @@ export const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<'in
         className,
       )}
       {...props}
+      autoComplete="off"
     />
   ),
 );

@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { JsonModel } from '../src/model/types.js';
 import {
   buildActivityQuery,
+  buildLifecycleQuery,
   getActivity,
   getAnswerEvidence,
   type ChainHeadSource,
@@ -85,10 +86,43 @@ function page(overrides: Partial<ActivityPage> = {}): ActivityPage {
 
 describe('Graph activity', () => {
   it('injects account scope and computes current freshness', async () => {
-    const request = vi.fn(async () => ({ data: { actions: [rawAction(refusal)], _meta: meta } }));
+    const lifecycleTx = `0x${'40'.repeat(32)}`;
+    const request = vi.fn(async ({ query }: { query: string }) =>
+      query.includes('AccountLifecycle')
+        ? {
+            data: {
+              lifecycleEvents: [
+                {
+                  id: `${lifecycleTx}00000000`,
+                  account: { id: ACCOUNT.toLowerCase() },
+                  kind: 'ACCOUNT_CREATED',
+                  amount: null,
+                  mandateId: null,
+                  agent: null,
+                  transactionHash: lifecycleTx,
+                  blockNumber: '90',
+                  blockHash: `0x${'41'.repeat(32)}`,
+                  timestamp: '1799999900',
+                  logIndex: '0',
+                },
+              ],
+            },
+          }
+        : { data: { actions: [rawAction(refusal)], _meta: meta } },
+    );
     const result = await getActivity(scope, { first: 50 }, { request }, head);
     expect(result).toMatchObject({ freshness: 'current', indexedBlock: '100' });
     expect(result.records).toHaveLength(1);
+    expect(result.lifecycleEvents).toMatchObject([
+      { kind: 'ACCOUNT_CREATED', transactionHash: lifecycleTx },
+    ]);
+  });
+
+  it('scopes lifecycle events to the payment account', () => {
+    const { query, variables } = buildLifecycleQuery(scope, 500);
+    expect(query).toContain('lifecycleEvents');
+    expect(query).toContain('account: $account');
+    expect(variables).toEqual({ account: ACCOUNT.toLowerCase(), first: 50 });
   });
 
   it('applies every filter in the where clause before pagination', () => {

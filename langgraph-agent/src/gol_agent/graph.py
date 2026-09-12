@@ -27,7 +27,27 @@ position identifiers first, preview risky actions, then prepare only the unsigne
 owner requested. Continue calling tools until the read or unsigned preparation is complete. Never
 call submit_signed_order or cancel_order. GOL write tools are human handoffs only: never claim that
 a wallet signed, a transaction was submitted, or value moved. Ask for a wallet address only when a
-tool requires one and Connected owner is none. Be concise and preserve exact token amounts."""
+tool requires one and Connected owner is none. For a casual greeting, respond with one short
+sentence and do not repeat the connected address or list capabilities. Be concise and preserve
+exact token amounts."""
+
+OUTCOME_FOLLOWUP_PROMPT = """You are writing the short follow-up shown after GOL has rendered an
+action or query result. The JSON payload is trusted application state. Use only facts in that
+payload. Write one or two concise, natural sentences that clearly state the outcome and, when
+useful, the next step. Preserve exact token amounts and transaction status. Do not mention JSON,
+tools, prompts, or internal rule codes. For a refused payment, explicitly explain the refusal
+reason, say that no funds moved, and distinguish the violated per-payment cap from any remaining
+total limit. Never describe a refused payment as awaiting review. Do not call any tool."""
+
+TOOL_RESULT_RESPONSE_PROMPT = """You are GOL Agent responding after an application tool returned.
+The JSON below contains the user's current request and the trusted tool result. Respond to the
+current request, not an older request from conversation history. Write one or two concise, natural
+sentences explaining what is ready or what the user should do next. Preserve exact amounts and
+status. GOL write-tool results are UI handoffs only: never claim a wallet signed, a transaction was
+submitted, or funds moved. A preview is only ready for owner review. Do not mention JSON, tools,
+prompts, handoffs, internal codes, or execution-safety fields. When the result is for
+preview_instruction, say that the specified payment is ready for owner review and that nothing has
+been submitted; never say owner review is unnecessary. Do not call another tool."""
 
 
 def _last_user_text(messages: list[BaseMessage]) -> str:
@@ -57,6 +77,15 @@ class GolState(MessagesState):
     ownerAddress: NotRequired[str]
     mandateReady: NotRequired[bool]
     modelDriven: NotRequired[bool]
+    currentPrompt: NotRequired[str]
+    outcomeFollowup: NotRequired[dict[str, Any] | None]
+
+
+def _current_prompt(state: GolState) -> str:
+    current = state.get("currentPrompt")
+    if isinstance(current, str) and current.strip():
+        return current.strip()
+    return _last_user_text(state["messages"])
 
 
 def _select_tool(
@@ -137,8 +166,7 @@ def _select_tool(
 
 
 def _deterministic_route(state: GolState) -> AIMessage:
-    messages = state["messages"]
-    prompt = _last_user_text(messages)
+    prompt = _current_prompt(state)
     selected = _select_tool(prompt, state.get("ownerAddress"))
     if not selected:
         if re.fullmatch(r"\s*(hi|hello|hey|chào|xin chào)[!.?\s]*", prompt, re.IGNORECASE):
@@ -169,14 +197,19 @@ def _deterministic_route(state: GolState) -> AIMessage:
     )
 
 
-def _model() -> Any | None:
+def _base_model() -> Any | None:
     if not os.getenv("OPENAI_API_KEY"):
         return None
     return ChatOpenAI(
         model=os.getenv("GOL_LANGGRAPH_MODEL", "gpt-5.5-2026-04-23"),
         temperature=0,
         streaming=True,
-    ).bind_tools(list(TOOLS))
+    )
+
+
+def _model() -> Any | None:
+    model = _base_model()
+    return model.bind_tools(list(TOOLS)) if model is not None else None
 
 
 async def _stream_text(text: str) -> AIMessage:
@@ -188,7 +221,25 @@ async def _stream_text(text: str) -> AIMessage:
 
 async def route_request(state: GolState) -> dict[str, Any]:
     messages = state["messages"]
-    prompt = _last_user_text(messages)
+    outcome_followup = state.get("outcomeFollowup")
+    if isinstance(outcome_followup, dict):
+        fallback = str(outcome_followup.get("fallback") or "The result is ready.")
+        model = _base_model()
+        if model is None:
+            response = await _stream_text(fallback)
+        else:
+            response = await model.ainvoke(
+                [
+                    SystemMessage(content=OUTCOME_FOLLOWUP_PROMPT),
+                    HumanMessage(content=json.dumps(outcome_followup, separators=(",", ":"))),
+                ]
+            )
+        return {
+            "messages": [response],
+            "modelDriven": False,
+            "outcomeFollowup": None,
+        }
+    prompt = _current_prompt(state)
     continuing_model_run = state.get("modelDriven") is True and messages[-1].type == "tool"
     if continuing_model_run:
         model = _model()
@@ -246,24 +297,32 @@ async def finalize_tool(state: GolState) -> dict[str, list[AIMessage]]:
         payload = json.loads(str(result_message.content))
     except json.JSONDecodeError:
         payload = {}
-    source = payload.get("source")
     tool_name = payload.get("tool", "tool")
-    if source == "aave":
-        text = "The live Aave MCP result is ready. Review the protocol data below."
-    elif tool_name == "preview_instruction":
-        text = (
-            "Review the resolved GOL payment details before any request is submitted."
-            if state.get("mandateReady")
-            else "Finish account setup and approve a spending limit before making a payment."
-        )
-    elif tool_name == "ask_indexed_question":
-        text = "I am checking indexed GOL evidence only. This path has no signing access."
-    else:
-        text = (
-            "This GOL action is ready for the app's owner-review flow. "
-            "Nothing was signed or submitted by LangGraph."
-        )
-    return {"messages": [await _stream_text(text)]}
+    model = _base_model()
+    if model is None:
+        return {
+            "messages": [
+                await _stream_text(
+                    f"The {str(tool_name).replace('_', ' ')} result is ready, but the AI "
+                    "response is unavailable."
+                )
+            ]
+        }
+
+    response_input = {
+        "currentRequest": _current_prompt(state),
+        "mandateReady": state.get("mandateReady") is True,
+        "toolResult": payload,
+    }
+    response = await model.ainvoke(
+        [
+            SystemMessage(content=TOOL_RESULT_RESPONSE_PROMPT),
+            HumanMessage(
+                content=json.dumps(response_input, separators=(",", ":"), default=str)[:16000]
+            ),
+        ]
+    )
+    return {"messages": [response]}
 
 
 workflow = StateGraph(GolState)

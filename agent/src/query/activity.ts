@@ -9,6 +9,8 @@ import {
   type ActivityRecord,
   type Address,
   type Hex32,
+  type LifecycleEventKind,
+  type LifecycleEventRecord,
 } from '@gol/protocol';
 import { z } from 'zod';
 
@@ -19,6 +21,8 @@ const ACTION_FIELDS = `id requestId account { id } mandate { id mandateId cumula
     transactionHash blockNumber blockHash timestamp logIndex`;
 
 const META_FIELDS = `_meta { block { number hash timestamp } hasIndexingErrors deployment }`;
+const LIFECYCLE_FIELDS = `id account { id } kind amount mandateId agent transactionHash
+    blockNumber blockHash timestamp logIndex`;
 
 export interface GraphTransport {
   request(body: { query: string; variables: Record<string, unknown> }): Promise<unknown>;
@@ -96,6 +100,33 @@ const responseSchema = z.object({
     .optional(),
 });
 
+const lifecycleKinds = [
+  'ACCOUNT_CREATED',
+  'FUNDS_ADDED',
+  'FUNDS_WITHDRAWN',
+  'MANDATE_CREATED',
+  'MANDATE_REVOKED',
+] as const satisfies readonly LifecycleEventKind[];
+
+const rawLifecycleSchema = z.object({
+  id: hexId,
+  account: z.object({ id: address }),
+  kind: z.enum(lifecycleKinds),
+  amount: units.nullable(),
+  mandateId: units.nullable(),
+  agent: address.nullable(),
+  transactionHash: hash32,
+  blockNumber: units,
+  blockHash: hash32,
+  timestamp: units,
+  logIndex: units,
+});
+
+const lifecycleResponseSchema = z.object({
+  errors: z.array(z.unknown()).optional(),
+  data: z.object({ lifecycleEvents: z.array(rawLifecycleSchema) }).optional(),
+});
+
 type RawAction = z.infer<typeof rawActionSchema>;
 type GraphMeta = NonNullable<z.infer<typeof responseSchema>['data']>['_meta'];
 
@@ -162,6 +193,22 @@ export function buildActivityQuery(
   return { query, variables };
 }
 
+export function buildLifecycleQuery(
+  scope: AccountScope,
+  first = ACTIVITY_PAGE_MAX,
+): { query: string; variables: Record<string, unknown> } {
+  const boundedFirst = Math.min(Math.max(Math.trunc(first), 1), ACTIVITY_PAGE_MAX);
+  return {
+    query: `query AccountLifecycle($account: Bytes!, $first: Int!) {
+  lifecycleEvents(first: $first, orderBy: timestamp, orderDirection: desc,
+    where: { account: $account }) {
+    ${LIFECYCLE_FIELDS}
+  }
+}`,
+    variables: { account: scope.account.toLowerCase(), first: boundedFirst },
+  };
+}
+
 export async function getActivity(
   scope: AccountScope,
   filter: ActivityFilter,
@@ -171,14 +218,51 @@ export async function getActivity(
   if (scope.chainId !== ARC_TESTNET_CHAIN_ID) throw new Error('Wrong chain');
   const first = Math.min(Math.max(Math.trunc(filter.first), 1), ACTIVITY_PAGE_MAX);
   try {
-    const { records, meta, head } = await fetchPage(scope, { ...filter, first }, graph, chain);
-    return page(records, meta, head, {
-      cursor: records.length === first ? (records.at(-1)?.sequence ?? null) : null,
-      partial: records.length === first,
-    });
+    const [{ records, meta, head }, lifecycleEvents] = await Promise.all([
+      fetchPage(scope, { ...filter, first }, graph, chain),
+      fetchLifecycle(scope, first, graph).catch(() => []),
+    ]);
+    return page(
+      records,
+      meta,
+      head,
+      {
+        cursor: records.length === first ? (records.at(-1)?.sequence ?? null) : null,
+        partial: records.length === first,
+      },
+      lifecycleEvents,
+    );
   } catch (error) {
     return unavailablePage(error instanceof GraphIntegrityError);
   }
+}
+
+async function fetchLifecycle(
+  scope: AccountScope,
+  first: number,
+  graph: GraphTransport,
+): Promise<LifecycleEventRecord[]> {
+  const raw = await graph.request(buildLifecycleQuery(scope, first));
+  const parsed = lifecycleResponseSchema.safeParse(raw);
+  if (!parsed.success || parsed.data.errors?.length || !parsed.data.data) return [];
+  for (const event of parsed.data.data.lifecycleEvents) {
+    if (event.account.id.toLowerCase() !== scope.account.toLowerCase()) {
+      throw new GraphIntegrityError('Graph returned an out-of-scope lifecycle account');
+    }
+  }
+  return parsed.data.data.lifecycleEvents.map((event) => ({
+    eventId: event.id as `0x${string}`,
+    account: event.account.id as Address,
+    kind: event.kind,
+    amountUnits: event.amount,
+    mandateId: event.mandateId,
+    agent: event.agent as Address | null,
+    transactionHash: event.transactionHash as Hex32,
+    blockNumber: event.blockNumber,
+    blockHash: event.blockHash as Hex32,
+    timestamp: event.timestamp,
+    logIndex: event.logIndex,
+  }));
 }
 
 /**
@@ -268,6 +352,7 @@ function page(
   meta: GraphMeta,
   head: { number: bigint; timestamp: bigint },
   pagination: { cursor: string | null; partial: boolean },
+  lifecycleEvents: LifecycleEventRecord[] = [],
 ): ActivityPage {
   const indexedTimestamp = BigInt(meta.block.timestamp ?? 0);
   const lag = head.timestamp > indexedTimestamp ? head.timestamp - indexedTimestamp : 0n;
@@ -284,6 +369,7 @@ function page(
             : 'current';
   return {
     records,
+    lifecycleEvents,
     cursor: pagination.cursor,
     indexedBlock: String(meta.block.number),
     indexedBlockHash: (meta.block.hash as Hex32 | undefined) ?? null,
@@ -322,6 +408,7 @@ function toActivityRecord(action: RawAction): ActivityRecord {
 function unavailablePage(integrityMismatch: boolean): ActivityPage {
   return {
     records: [],
+    lifecycleEvents: [],
     cursor: null,
     indexedBlock: null,
     indexedBlockHash: null,

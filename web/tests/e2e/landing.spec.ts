@@ -6,6 +6,13 @@ test.describe('public visual landing page', () => {
   test('leads with the consequence and preserves the product boundary', async ({ page }) => {
     await page.goto('/');
     await expect(page.getByRole('heading', { level: 1, name: headline })).toBeVisible();
+    const wordmark = page.getByText('GOL Network', { exact: true }).first();
+    await expect(wordmark).toBeVisible();
+    await expect(wordmark).toHaveClass(/font-pixel-wordmark/);
+    await expect(page.locator('link[rel="icon"][type="image/svg+xml"]')).toHaveAttribute(
+      'href',
+      '/gol-mark-blue.svg',
+    );
     await expect(page.locator('main > section')).toHaveCount(6);
     await expect(page.locator('[data-visual]')).toHaveCount(10);
     await expect(page.getByText('Refused: PER_TX_CAP')).toBeVisible();

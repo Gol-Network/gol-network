@@ -12,7 +12,10 @@ import { ARC_TESTNET_CAIP2, ARC_TESTNET_CHAIN_ID, type Address } from '@gol/prot
  */
 export const AGENT_POLICY_VERSION = '1.0';
 /** GOL-side policy revision. Increment when the submitted rules change. */
-export const AGENT_POLICY_REVISION = '2';
+// Revision 3 rotates accounts away from the retired Privy authorization quorum. Existing payment
+// accounts and funds stay in place; provisioning creates a reachable agent wallet and the owner
+// then authorizes that new address with a replacement mandate.
+export const AGENT_POLICY_REVISION = '3';
 export const PRIVY_POLICY_NAME_MAX_LENGTH = 50;
 
 export type PolicyField = 'chain_id' | 'to' | 'value';

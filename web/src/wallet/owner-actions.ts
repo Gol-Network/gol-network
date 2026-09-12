@@ -1,6 +1,7 @@
 import {
   ARC_TESTNET_USDC,
   erc20Abi,
+  formatUsdc,
   golAccountAbi,
   golAccountFactoryAbi,
   type Address,
@@ -166,7 +167,21 @@ export async function transferUsdc(
   amount: bigint,
   report: TransactionReporter,
 ) {
-  const { client } = await ownerClient(provider, config);
+  const { owner, client } = await ownerClient(provider, config);
+  const balance = await publicClientFor(config).readContract({
+    address: ARC_TESTNET_USDC,
+    abi: erc20Abi,
+    functionName: 'balanceOf',
+    args: [owner],
+  });
+  if (balance < amount) {
+    const error = new OwnerTransactionError(
+      'failed',
+      `Your connected wallet has ${formatUsdc(balance)} USDC, but this transfer requires ${formatUsdc(amount)} USDC.`,
+    );
+    report({ phase: error.phase, detail: error.message });
+    throw error;
+  }
   return runOwnerTransaction(config, report, () =>
     client.writeContract({
       address: ARC_TESTNET_USDC,

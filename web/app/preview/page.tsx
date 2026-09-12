@@ -1093,9 +1093,7 @@ export default async function PreviewPage({
           <div>
             <div className="mb-3 flex items-center gap-2">
               <img src="/gol-mark-blue.svg" alt="" className="size-8" />
-              <span className="font-mono text-xs font-semibold uppercase tracking-[.2em] text-primary">
-                GOL Network
-              </span>
+              <span className="font-pixel-wordmark text-sm text-primary">GOL Network</span>
             </div>
             <h1 className="text-3xl font-semibold tracking-tight">GOL tool cards</h1>
             <p className="mt-2 max-w-xl text-sm leading-copy text-muted-foreground">

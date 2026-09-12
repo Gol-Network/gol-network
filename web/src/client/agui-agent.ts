@@ -14,11 +14,20 @@ export type AgentToolResult = {
   handoff: Record<string, unknown> | null;
 };
 
+export type AgentOutcomeFollowup = {
+  kind: 'query' | 'payment' | 'wallet_action';
+  status: string;
+  summary: string;
+  facts: Record<string, string | number | boolean | null>;
+  fallback: string;
+};
+
 export type RunGolAgentOptions = {
   threadId: string;
   history: AgentHistoryMessage[];
   ownerAddress?: string | null | undefined;
   mandateReady: boolean;
+  outcomeFollowup?: AgentOutcomeFollowup | undefined;
   abortController: AbortController;
   onEvent?: ((event: BaseEvent) => void) | undefined;
   onStatus?: ((status: string) => void) | undefined;
@@ -67,6 +76,9 @@ function latestAssistantText(messages: ReadonlyArray<Readonly<Message>>): string
 
 export async function runGolAgent(options: RunGolAgentOptions): Promise<RunGolAgentResult> {
   const initialMessages = asMessages(options.history);
+  const currentPrompt = [...options.history]
+    .reverse()
+    .find((message) => message.role === 'user')?.text;
   const initialIds = new Set(initialMessages.map((message) => message.id));
   const agent = new HttpAgent({
     agentId: 'gol-agent',
@@ -76,6 +88,8 @@ export async function runGolAgent(options: RunGolAgentOptions): Promise<RunGolAg
     initialState: {
       ownerAddress: options.ownerAddress ?? null,
       mandateReady: options.mandateReady,
+      currentPrompt: currentPrompt ?? '',
+      outcomeFollowup: options.outcomeFollowup ?? null,
     },
   });
   const toolNames = new Map<string, string>();

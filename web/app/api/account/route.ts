@@ -1,4 +1,10 @@
-import { ARC_TESTNET_USDC, addressSchema, erc20Abi, golAccountAbi } from '@gol/protocol';
+import {
+  ARC_TESTNET_USDC,
+  addressSchema,
+  erc20Abi,
+  golAccountAbi,
+  golAccountFactoryAbi,
+} from '@gol/protocol';
 import { AGENT_POLICY_REVISION, agentPolicyDisclosure } from '@gol/agent/privy';
 import { kmsAgentDisclosure } from '@gol/agent/signer-disclosure';
 import { NextResponse } from 'next/server';
@@ -8,6 +14,7 @@ import { arcClient } from '@/server/chain';
 import { runtimeConfig } from '@/server/env';
 
 export const runtime = 'nodejs';
+const ZERO = '0x0000000000000000000000000000000000000000';
 
 const querySchema = z.object({ owner: addressSchema });
 
@@ -19,7 +26,7 @@ export async function GET(request: Request) {
     const { public: publicConfig } = runtimeConfig();
     const result = await pool.query(
       `SELECT owner_address, account_address, agent_address, agent_wallet_id, policy_id,
-              signer_provider, signer_region, policy_version, updated_at
+              signer_provider, signer_region, policy_version, recipient_mode, updated_at
        FROM account_links
        WHERE user_subject = $1 AND lower(owner_address) = lower($2)`,
       [session.subject, owner],
@@ -32,6 +39,23 @@ export async function GET(request: Request) {
     const accountAddress = String(row.account_address).trim() as `0x${string}`;
     const ownerAddress = String(row.owner_address).trim() as `0x${string}`;
     const agentAddress = String(row.agent_address).trim() as `0x${string}`;
+
+    // Immutable accounts created by an older factory remain preserved in the journal, but the
+    // active UI must create and link the account produced by the configured factory.
+    if (publicConfig.factoryAddress) {
+      const factoryAccount = await client.readContract({
+        address: publicConfig.factoryAddress,
+        abi: golAccountFactoryAbi,
+        functionName: 'accounts',
+        args: [ownerAddress],
+      });
+      if (
+        factoryAccount === ZERO ||
+        factoryAccount.toLowerCase() !== accountAddress.toLowerCase()
+      ) {
+        return NextResponse.json({ state: 'no_account', chainId: publicConfig.chainId });
+      }
+    }
 
     const [chainOwner, ownerUsdc, accountUsdc, activeMandateId, ownerGas, agentGas, recipients] =
       await Promise.all([
@@ -67,15 +91,23 @@ export async function GET(request: Request) {
     if (chainOwner.toLowerCase() !== ownerAddress.toLowerCase()) {
       return NextResponse.json({ error: 'ONCHAIN_OWNER_MISMATCH' }, { status: 409 });
     }
-    const mandate =
+    const [mandate, mandateRecipients] =
       activeMandateId === 0n
-        ? null
-        : await client.readContract({
-            address: accountAddress,
-            abi: golAccountAbi,
-            functionName: 'getMandate',
-            args: [activeMandateId],
-          });
+        ? [null, []]
+        : await Promise.all([
+            client.readContract({
+              address: accountAddress,
+              abi: golAccountAbi,
+              functionName: 'getMandate',
+              args: [activeMandateId],
+            }),
+            client.readContract({
+              address: accountAddress,
+              abi: golAccountAbi,
+              functionName: 'getRecipients',
+              args: [activeMandateId],
+            }),
+          ]);
     const recipientViews = await Promise.all(
       recipients.rows.map(async (recipient: Record<string, unknown>) => {
         const recipientAddress = addressSchema.parse(String(recipient.address).trim());
@@ -132,6 +164,7 @@ export async function GET(request: Request) {
         ownerGasWei: ownerGas.toString(),
         agentGasWei: agentGas.toString(),
       },
+      recipientMode: String(row.recipient_mode ?? 'allowlist'),
       recipients: recipientViews,
       balanceUnits: accountUsdc.toString(),
       activeMandateId: activeMandateId.toString(),
@@ -143,6 +176,7 @@ export async function GET(request: Request) {
             spentUnits: mandate.spent.toString(),
             expiresAt: mandate.expiresAt.toString(),
             revoked: mandate.revoked,
+            allowAnyRecipient: mandateRecipients.length === 0,
           }
         : null,
       chainReadAt: new Date().toISOString(),

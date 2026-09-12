@@ -89,6 +89,7 @@
 
   --font-sans: var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-jetbrains-mono), ui-monospace, monospace;
+  --font-pixel: var(--font-silkscreen), var(--font-jetbrains-mono), ui-monospace, monospace;
 
   --radius-sm: calc(var(--radius) - 0.375rem);
   --radius-md: calc(var(--radius) - 0.125rem);
@@ -269,6 +270,22 @@
 }
 
 @layer components {
+  .font-pixel-wordmark {
+    font-family: var(--font-pixel);
+    font-weight: 700;
+    font-variant-ligatures: none;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  #privy-dialog-title {
+    font-family: var(--font-pixel) !important;
+    font-size: 1.125rem !important;
+    font-weight: 700 !important;
+    font-variant-ligatures: none;
+    letter-spacing: 0.02em !important;
+  }
+
   .landing-hero-stage {
     position: relative;
     isolation: isolate;

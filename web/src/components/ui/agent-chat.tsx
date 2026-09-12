@@ -9,10 +9,13 @@ import {
   Send,
   ShieldCheck,
   Square,
+  Trash2,
   WalletCards,
+  Wrench,
 } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import {
   PromptInput,
@@ -23,7 +26,7 @@ import {
 import { AaveLogo } from '@/components/ui/aave-logo';
 import { GolLogo } from '@/components/ui/gol-logo';
 import { TokenIcon } from '@/components/ui/token-icon';
-import { runGolAgent } from '@/client/agui-agent';
+import { runGolAgent, type AgentOutcomeFollowup } from '@/client/agui-agent';
 import { extractPreparedAaveReview } from '@/client/aave-transactions';
 import {
   chatHistoryStorageKey,
@@ -36,12 +39,18 @@ import {
 import { GOL_TOOLS, GOL_TOOL_COUNT } from '@/lib/gol-tool-registry';
 import { cn } from '@/lib/utils';
 import { PAYMENT_STAGES } from '@/client/stages';
+import type { TransactionState } from '@/client/types';
 import { formatUsdc } from '@gol/protocol';
 
 type ProtocolAction = PersistedProtocolAction;
 type ToolRun = PersistedToolRun;
 type ChatMessage = PersistedChatMessage & {
   streaming?: boolean | undefined;
+};
+
+type OutcomeFollowupView = {
+  text: string;
+  streaming: boolean;
 };
 
 interface AgentChatProps {
@@ -55,6 +64,7 @@ interface AgentChatProps {
   onAaveReview: (result: unknown, action: ProtocolAction) => void;
   onGolToolReview: (tool: string, arguments_: Record<string, unknown>) => void;
   mandateReady: boolean;
+  perPaymentCapUnits: string | null;
   preview?: {
     amountUsdc: string;
     recipientLabel: string;
@@ -63,13 +73,18 @@ interface AgentChatProps {
   } | null;
   onConfirmPreview: () => void;
   onCancelPreview: () => void;
+  onClearConversation: () => void;
   payment?: {
     stage: keyof typeof PAYMENT_STAGES;
+    requestId?: string | null;
+    txHash?: string | null;
     detail: string;
     rule: string | null;
+    attemptedUnits: string | null;
     headroomUnits: string | null;
     warning: string | null;
   };
+  transaction?: TransactionState;
   answer?: {
     text: string;
     recordCount: number;
@@ -463,12 +478,19 @@ function ProtocolActionCard({
             <span className="block text-[10px] uppercase tracking-wider text-muted-foreground">
               Authority
             </span>
-            <strong className="mt-1 block text-sm">Owner signs</strong>
+            <strong className="mt-1 block text-sm">
+              {action.kind === 'mandate' && action.title === 'GOL payment'
+                ? 'Agent mandate'
+                : 'Owner signs'}
+            </strong>
           </div>
         </div>
         <div className="flex items-center justify-between bg-muted px-4 py-3">
           <span className="flex items-center gap-1.5 text-[11px] text-success">
-            <ShieldCheck size={13} /> Simulation first
+            <ShieldCheck size={13} />
+            {action.kind === 'mandate' && action.title === 'GOL payment'
+              ? 'Rules checked first'
+              : 'Simulation first'}
           </span>
           {!action.blocked && (
             <Button size="sm" onClick={onReview}>
@@ -481,25 +503,86 @@ function ProtocolActionCard({
   );
 }
 
+function ChatMessageText({ message, className }: { message: ChatMessage; className?: string }) {
+  return (
+    <p
+      className={cn(
+        'text-sm leading-copy',
+        message.role === 'agent' ? 'text-foreground' : 'text-primary-foreground',
+        className,
+      )}
+    >
+      {message.text}
+      {message.streaming ? (
+        <span
+          aria-hidden
+          className="ml-1 inline-block h-[1em] w-0.5 translate-y-[2px] animate-pulse bg-current"
+        />
+      ) : null}
+    </p>
+  );
+}
+
+function AgentOutcomeMessage({ followup }: { followup: OutcomeFollowupView }) {
+  return (
+    <div className="flex items-start gap-3" aria-live="polite">
+      <img src="/gol-mark-blue.svg" alt="" className="mt-1 size-9 shrink-0" />
+      <div className="max-w-[88%] rounded-xl rounded-tl-md border border-border bg-muted px-5 py-3">
+        <p className="text-sm leading-copy text-foreground">
+          {followup.text}
+          {followup.streaming ? (
+            <span
+              aria-hidden
+              className="ml-1 inline-block h-[1em] w-0.5 translate-y-[2px] animate-pulse bg-current"
+            />
+          ) : null}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function InlineOutcomeFollowup({ followup }: { followup: OutcomeFollowupView }) {
+  return (
+    <p className="mt-3 border-t border-border pt-3 text-sm leading-copy text-foreground">
+      {followup.text}
+      {followup.streaming ? (
+        <span
+          aria-hidden
+          className="ml-1 inline-block h-[1em] w-0.5 translate-y-[2px] animate-pulse bg-current"
+        />
+      ) : null}
+    </p>
+  );
+}
+
 export function AgentChat(props: AgentChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [toolCount, setToolCount] = useState<number | null>(null);
   const [sending, setSending] = useState(false);
   const [runStatus, setRunStatus] = useState<string | null>(null);
   const [showPaymentStatus, setShowPaymentStatus] = useState(false);
+  const [outcomeFollowups, setOutcomeFollowups] = useState<Record<string, OutcomeFollowupView>>({});
   const [hydratedHistoryScope, setHydratedHistoryScope] = useState<string | null | undefined>(
     undefined,
   );
   const scrollRef = useRef<HTMLDivElement>(null);
   const threadIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const followupControllersRef = useRef(new Set<AbortController>());
+  const messagesRef = useRef(messages);
   const historyScope = props.ownerAddress?.toLowerCase() ?? null;
   const historyReady = hydratedHistoryScope === historyScope;
+  const lastTransactionRef = useRef<string | null>(null);
+  const lastPaymentRef = useRef<string | null>(null);
+  const lastAnswerRef = useRef<string | null>(null);
+  messagesRef.current = messages;
 
   useEffect(() => {
     setHydratedHistoryScope(undefined);
     if (!historyScope) {
       setMessages(initialMessages());
+      setOutcomeFollowups({});
       threadIdRef.current = null;
       setHydratedHistoryScope(null);
       return;
@@ -510,9 +593,11 @@ export function AgentChat(props: AgentChatProps) {
         window.localStorage.getItem(chatHistoryStorageKey(historyScope)),
       );
       setMessages(restored.messages.length > 0 ? restored.messages : initialMessages());
+      setOutcomeFollowups(restoreOutcomeFollowups(restored.followups));
       threadIdRef.current = restored.threadId;
     } catch {
       setMessages(initialMessages());
+      setOutcomeFollowups({});
       threadIdRef.current = null;
     }
     setHydratedHistoryScope(historyScope);
@@ -524,14 +609,18 @@ export function AgentChat(props: AgentChatProps) {
       try {
         window.localStorage.setItem(
           chatHistoryStorageKey(historyScope),
-          serializeChatHistory(messages, threadIdRef.current),
+          serializeChatHistory(
+            messages,
+            threadIdRef.current,
+            persistableOutcomeFollowups(outcomeFollowups),
+          ),
         );
       } catch {
         // Chat remains usable when browser storage is disabled or full.
       }
     }, 150);
     return () => window.clearTimeout(timeout);
-  }, [historyScope, hydratedHistoryScope, messages]);
+  }, [historyScope, hydratedHistoryScope, messages, outcomeFollowups]);
 
   useEffect(() => {
     void fetch('/api/aave/mcp')
@@ -545,9 +634,106 @@ export function AgentChat(props: AgentChatProps) {
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-  }, [messages, props.preview, props.payment?.stage, props.answer]);
+  }, [messages, outcomeFollowups, props.preview, props.payment?.stage, props.answer]);
 
-  useEffect(() => () => abortRef.current?.abort('component unmounted'), []);
+  useEffect(
+    () => () => {
+      abortRef.current?.abort('component unmounted');
+      followupControllersRef.current.forEach((controller) =>
+        controller.abort('component unmounted'),
+      );
+    },
+    [],
+  );
+
+  async function streamOutcomeFollowup(
+    slot: string,
+    outcomeId: string,
+    outcome: AgentOutcomeFollowup,
+  ) {
+    if (!historyReady || outcomeId === lastOutcomeId(slot, outcomeFollowups)) return;
+    setOutcomeFollowups((current) => ({
+      ...current,
+      [slot]: { text: '', streaming: true },
+      [`${slot}:id`]: { text: outcomeId, streaming: false },
+    }));
+    const controller = new AbortController();
+    followupControllersRef.current.add(controller);
+    threadIdRef.current ??= crypto.randomUUID();
+    try {
+      const result = await runGolAgent({
+        threadId: threadIdRef.current,
+        history: messagesRef.current,
+        ownerAddress: props.ownerAddress,
+        mandateReady: props.mandateReady,
+        outcomeFollowup: outcome,
+        abortController: controller,
+        onText: (text) =>
+          setOutcomeFollowups((current) => ({
+            ...current,
+            [slot]: { text, streaming: true },
+          })),
+      });
+      setOutcomeFollowups((current) => ({
+        ...current,
+        [slot]: { text: result.text || outcome.fallback, streaming: false },
+      }));
+    } catch {
+      if (!controller.signal.aborted) {
+        setOutcomeFollowups((current) => ({
+          ...current,
+          [slot]: { text: outcome.fallback, streaming: false },
+        }));
+      }
+    } finally {
+      followupControllersRef.current.delete(controller);
+    }
+  }
+
+  useEffect(() => {
+    const transaction = props.transaction;
+    if (!transaction?.kind || transaction.phase === 'idle') {
+      lastTransactionRef.current = null;
+      setOutcomeFollowups((current) => withoutOutcomeSlot(current, 'owner'));
+      return;
+    }
+    if (transaction.phase === 'awaiting_signature' || transaction.phase === 'submitted') {
+      lastTransactionRef.current = null;
+      setOutcomeFollowups((current) => withoutOutcomeSlot(current, 'owner'));
+      return;
+    }
+    const key = [transaction.kind, transaction.phase, transaction.hash, transaction.detail].join(
+      ':',
+    );
+    if (lastTransactionRef.current === key) return;
+    lastTransactionRef.current = key;
+    void streamOutcomeFollowup('owner', key, ownerTransactionOutcome(transaction));
+  }, [props.transaction]);
+
+  useEffect(() => {
+    const payment = props.payment;
+    if (!showPaymentStatus || !payment || !PAYMENT_STAGES[payment.stage].terminal) return;
+    if (payment.stage === 'idle') return;
+    const key = [
+      payment.requestId,
+      payment.stage,
+      payment.txHash,
+      payment.rule,
+      payment.attemptedUnits,
+    ].join(':');
+    if (lastPaymentRef.current === key) return;
+    lastPaymentRef.current = key;
+    void streamOutcomeFollowup('payment', key, paymentOutcome(payment, props.perPaymentCapUnits));
+  }, [props.payment, showPaymentStatus]);
+
+  useEffect(() => {
+    const answer = props.answer;
+    if (!answer) return;
+    const key = [answer.indexedBlock, answer.recordCount, answer.text].join(':');
+    if (lastAnswerRef.current === key) return;
+    lastAnswerRef.current = key;
+    void streamOutcomeFollowup('answer', key, indexedAnswerOutcome(answer));
+  }, [props.answer]);
 
   const updateAgentMessage = (id: string, update: Partial<ChatMessage>) => {
     setMessages((current) =>
@@ -654,6 +840,13 @@ export function AgentChat(props: AgentChatProps) {
         streaming: false,
         ...(streamed.tool?.handoff ? { handoff: streamed.tool.handoff } : {}),
       });
+      if (streamed.tool?.source === 'aave') {
+        await streamOutcomeFollowup(
+          `aave:${agentMessageId}`,
+          `${agentMessageId}:${streamed.tool.tool}`,
+          aaveResultOutcome(streamed.tool.tool, streamed.tool.result, preparedAaveReview !== null),
+        );
+      }
     } catch (error) {
       updateAgentMessage(agentMessageId, {
         text: controller.signal.aborted
@@ -687,25 +880,70 @@ export function AgentChat(props: AgentChatProps) {
       ? props.payment
       : null;
 
+  const clearConversation = () => {
+    abortRef.current?.abort('conversation cleared');
+    followupControllersRef.current.forEach((controller) =>
+      controller.abort('conversation cleared'),
+    );
+    followupControllersRef.current.clear();
+    if (historyScope) window.localStorage.removeItem(chatHistoryStorageKey(historyScope));
+    threadIdRef.current = null;
+    lastTransactionRef.current = null;
+    lastPaymentRef.current = null;
+    lastAnswerRef.current = null;
+    setMessages(initialMessages());
+    setOutcomeFollowups({});
+    setShowPaymentStatus(false);
+    setRunStatus(null);
+    setSending(false);
+    props.onDraftChange('');
+    props.onClearConversation();
+  };
+
   return (
     <Card className="@container flex min-h-[720px] flex-col overflow-hidden rounded-card shadow-panel xl:h-full xl:min-h-0">
       <header className="flex min-h-[88px] items-center justify-between border-b border-border px-6">
         <div>
-          <h2 className="font-mono text-sm font-bold uppercase tracking-[.22em]">GOL Agent</h2>
+          <h2 className="font-pixel-wordmark text-sm">GOL Agent</h2>
           <p className="mt-1 text-xs text-muted-foreground">
             GOL uses Arc. Aave uses reviewed networks.
           </p>
         </div>
-        <Button
-          asChild
-          variant="outline"
-          size="sm"
-          className="hidden h-auto rounded-full px-3 py-2 font-mono text-[9px] font-normal uppercase tracking-wider text-muted-foreground @min-[520px]:inline-flex"
-        >
-          <a href="/tools">
-            {toolCount === null ? 'Connecting tools' : String(toolCount) + ' agent tools'}
-          </a>
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={clearConversation}
+            className="size-10 rounded-full text-muted-foreground"
+            aria-label="Clear conversation"
+            title="Clear conversation"
+          >
+            <Trash2 className="size-4" />
+          </Button>
+          <Button
+            asChild
+            variant="outline"
+            size="icon"
+            className="relative size-10 rounded-full text-muted-foreground"
+          >
+            <a
+              href="/tools"
+              aria-label={toolCount === null ? 'Connecting tools' : `${toolCount} agent tools`}
+              title="Agent tools"
+            >
+              <Wrench className="size-4" />
+              {toolCount !== null && (
+                <span
+                  aria-hidden="true"
+                  className="absolute -top-1 -right-1 grid min-w-4 place-items-center rounded-full bg-primary px-1 font-mono text-[8px] leading-4 text-primary-foreground"
+                >
+                  {toolCount}
+                </span>
+              )}
+            </a>
+          </Button>
+        </div>
       </header>
 
       <div ref={scrollRef} className="min-h-0 flex-1 space-y-6 overflow-y-auto px-6 py-7">
@@ -715,131 +953,157 @@ export function AgentChat(props: AgentChatProps) {
           </div>
         )}
         {historyReady &&
-          messages.map((message) => (
-            <div
-              key={message.id}
-              className={cn('flex items-start gap-3', message.role === 'user' && 'justify-end')}
-            >
-              {message.role === 'agent' && (
-                <img src="/gol-mark-blue.svg" alt="" className="mt-1 size-9 shrink-0" />
-              )}
+          messages
+            .filter(
+              (message) =>
+                !(
+                  message.handoff?.tool === 'preview_instruction' &&
+                  liveStage &&
+                  PAYMENT_STAGES[liveStage.stage].terminal
+                ),
+            )
+            .map((message) => (
               <div
-                className={cn(
-                  'max-w-[88%]',
-                  message.role === 'agent' &&
-                    'rounded-xl rounded-tl-md border border-border bg-muted px-5 py-4',
-                  message.role === 'user' &&
-                    'rounded-xl rounded-br-md bg-primary px-5 py-3 text-sm text-primary-foreground',
-                )}
+                key={message.id}
+                className={cn('flex items-start gap-3', message.role === 'user' && 'justify-end')}
               >
-                <p
+                {message.role === 'agent' && (
+                  <img src="/gol-mark-blue.svg" alt="" className="mt-1 size-9 shrink-0" />
+                )}
+                <div
                   className={cn(
-                    'text-sm leading-copy',
-                    message.role === 'agent' ? 'text-foreground' : 'text-primary-foreground',
+                    'max-w-[88%]',
+                    message.role === 'agent' &&
+                      'rounded-xl rounded-tl-md border border-border bg-muted px-5 py-4',
+                    message.role === 'user' &&
+                      'rounded-xl rounded-br-md bg-primary px-5 py-3 text-sm text-primary-foreground',
                   )}
                 >
-                  {message.text}
-                  {message.streaming ? (
-                    <span
-                      aria-hidden
-                      className="ml-1 inline-block h-[1em] w-0.5 translate-y-[2px] animate-pulse bg-current"
-                    />
-                  ) : null}
-                </p>
-                {message.toolRuns?.length ? (
-                  <div className="mt-3 space-y-1.5" aria-label="Agent tool activity">
-                    {message.toolRuns.map((run) => (
-                      <div
-                        key={run.id}
-                        className="flex items-center gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-[10px] text-muted-foreground"
-                      >
-                        {run.source === 'aave' ? (
-                          <AaveLogo className="size-4 shrink-0" />
-                        ) : (
-                          <GolLogo className="size-4 shrink-0" />
-                        )}
-                        <span className="min-w-0 flex-1 truncate">{formatToolName(run.name)}</span>
-                        <span
-                          className={cn(
-                            'flex shrink-0 items-center gap-1',
-                            run.state === 'complete' && 'text-success',
-                            run.state === 'failed' && 'text-destructive',
-                          )}
+                  {message.source === 'aave' && message.result !== undefined ? null : (
+                    <ChatMessageText message={message} />
+                  )}
+                  {message.toolRuns?.length && message.handoff?.tool !== 'preview_instruction' ? (
+                    <div className="mt-3 space-y-1.5" aria-label="Agent tool activity">
+                      {message.toolRuns.map((run) => (
+                        <div
+                          key={run.id}
+                          className="flex items-center gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-[10px] text-muted-foreground"
                         >
-                          {run.state === 'running' ? (
-                            <LoaderCircle className="size-3 animate-spin" />
-                          ) : run.state === 'complete' ? (
-                            <CheckCircle2 className="size-3" />
+                          {run.source === 'aave' ? (
+                            <AaveLogo className="size-4 shrink-0" />
                           ) : (
-                            <CircleAlert className="size-3" />
+                            <GolLogo className="size-4 shrink-0" />
                           )}
-                          {run.state === 'running'
-                            ? 'Running'
-                            : run.state === 'complete'
-                              ? 'Complete'
-                              : 'Failed'}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-                {message.source === 'aave' && message.tool && message.result !== undefined && (
-                  <AaveResultCard tool={message.tool} result={message.result} />
-                )}
-                {message.action && (
-                  <ProtocolActionCard
-                    action={message.action}
-                    onReview={() => {
-                      if (message.source === 'aave' && message.result !== undefined) {
-                        props.onAaveReview(message.result, message.action!);
-                        return;
-                      }
-                      const handoffTool = message.handoff?.tool;
-                      const handoffArguments = message.handoff?.arguments;
-                      if (
-                        typeof handoffTool === 'string' &&
-                        handoffTool !== 'preview_instruction'
-                      ) {
-                        props.onGolToolReview(
-                          handoffTool,
-                          handoffArguments && typeof handoffArguments === 'object'
-                            ? (handoffArguments as Record<string, unknown>)
-                            : {},
-                        );
-                        return;
-                      }
-                      props.onOpenActions();
-                    }}
-                  />
-                )}
+                          <span className="min-w-0 flex-1 truncate">
+                            {formatToolName(run.name)}
+                          </span>
+                          <span
+                            className={cn(
+                              'flex shrink-0 items-center gap-1',
+                              run.state === 'complete' && 'text-success',
+                              run.state === 'failed' && 'text-destructive',
+                            )}
+                          >
+                            {run.state === 'running' ? (
+                              <LoaderCircle className="size-3 animate-spin" />
+                            ) : run.state === 'complete' ? (
+                              <CheckCircle2 className="size-3" />
+                            ) : (
+                              <CircleAlert className="size-3" />
+                            )}
+                            {run.state === 'running'
+                              ? 'Running'
+                              : run.state === 'complete'
+                                ? 'Complete'
+                                : 'Failed'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  {message.source === 'aave' && message.tool && message.result !== undefined && (
+                    <>
+                      <AaveResultCard tool={message.tool} result={message.result} />
+                      <ChatMessageText message={message} className="mt-3" />
+                      {outcomeFollowups[`aave:${message.id}`] ? (
+                        <InlineOutcomeFollowup followup={outcomeFollowups[`aave:${message.id}`]!} />
+                      ) : null}
+                    </>
+                  )}
+                  {message.action && message.handoff?.tool !== 'preview_instruction' && (
+                    <ProtocolActionCard
+                      action={message.action}
+                      onReview={() => {
+                        if (message.source === 'aave' && message.result !== undefined) {
+                          props.onAaveReview(message.result, message.action!);
+                          return;
+                        }
+                        const handoffTool = message.handoff?.tool;
+                        const handoffArguments = message.handoff?.arguments;
+                        if (
+                          typeof handoffTool === 'string' &&
+                          handoffTool !== 'preview_instruction'
+                        ) {
+                          props.onGolToolReview(
+                            handoffTool,
+                            handoffArguments && typeof handoffArguments === 'object'
+                              ? (handoffArguments as Record<string, unknown>)
+                              : {},
+                          );
+                          return;
+                        }
+                        props.onOpenActions();
+                      }}
+                    />
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
 
         {props.preview && (
           <Card
+            role="region"
+            aria-label="Payment review"
             data-testid="instruction-preview"
-            className="ml-10 overflow-hidden border-primary/20 bg-accent shadow-none"
+            className="ml-10 w-[calc(100%_-_2.5rem)] max-w-md overflow-hidden border-primary/30 bg-card shadow-none"
           >
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <span className="font-mono text-[9px] uppercase tracking-[.16em] text-accent-foreground">
-                  Payment review
+            <CardContent className="p-0">
+              <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <GolLogo className="size-4" />
+                  <span className="font-mono text-[9px] uppercase tracking-[.16em] text-primary">
+                    Payment review
+                  </span>
+                </div>
+                <span className="flex items-center gap-1 text-[10px] text-success">
+                  <ShieldCheck size={12} /> Rules checked
                 </span>
-                <GolLogo className="size-4" />
               </div>
-              <strong className="mt-4 block text-2xl">{props.preview.amountUsdc} USDC</strong>
-              <p className="mt-1 text-xs text-muted-foreground">
-                To {props.preview.recipientLabel}. Checked against your payment rules.
-              </p>
-              <code className="mt-2 block break-all text-[10px] text-muted-foreground">
-                {props.preview.recipient}
-              </code>
-              <div className="mt-4 grid grid-cols-2 gap-2">
-                <Button variant="outline" onClick={props.onCancelPreview}>
+              <div className="grid gap-3 px-4 py-4 sm:grid-cols-[auto_minmax(0,1fr)] sm:items-center sm:gap-6">
+                <div>
+                  <span className="block text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Amount
+                  </span>
+                  <strong className="mt-1 block text-xl">{props.preview.amountUsdc} USDC</strong>
+                </div>
+                <div className="min-w-0">
+                  <span className="block text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Recipient
+                  </span>
+                  <strong className="mt-1 block text-sm">{props.preview.recipientLabel}</strong>
+                  <code
+                    className="mt-1 block truncate text-[10px] text-muted-foreground"
+                    title={props.preview.recipient}
+                  >
+                    {props.preview.recipient}
+                  </code>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 border-t border-border bg-muted px-4 py-3">
+                <Button size="sm" variant="ghost" onClick={props.onCancelPreview}>
                   Cancel
                 </Button>
-                <Button onClick={props.onConfirmPreview}>
+                <Button size="sm" onClick={props.onConfirmPreview}>
                   Send payment <ArrowRight size={14} />
                 </Button>
               </div>
@@ -847,75 +1111,97 @@ export function AgentChat(props: AgentChatProps) {
           </Card>
         )}
         {liveStage && (
-          <Card data-testid="payment-stage" className="ml-10 bg-muted shadow-none">
-            <CardContent className="flex gap-3 p-4">
-              {liveStage.stage === 'executed' ? (
-                <CheckCircle2 className="text-success" size={19} />
-              ) : ['refused', 'needs_clarification', 'unknown'].includes(liveStage.stage) ? (
-                <CircleAlert className="text-warning" size={19} />
-              ) : (
-                <LoaderCircle className="animate-spin text-primary" size={19} />
-              )}
-              <div>
-                <span className="font-mono text-[9px] uppercase tracking-[.16em] text-muted-foreground">
-                  GOL payment
+          <>
+            <Card
+              data-testid="payment-stage"
+              className={`ml-10 w-[calc(100%_-_2.5rem)] max-w-md overflow-hidden bg-card shadow-none ${liveStage.stage === 'refused' ? 'border-warning/25' : ''}`}
+            >
+              <CardContent className="flex items-start gap-3 p-4">
+                <span
+                  className={`grid size-9 shrink-0 place-items-center rounded-full ${liveStage.stage === 'executed' ? 'bg-success/10 text-success' : PAYMENT_STAGES[liveStage.stage].terminal ? 'bg-warning/10 text-warning' : 'bg-primary/10 text-primary'}`}
+                >
+                  {liveStage.stage === 'executed' ? (
+                    <CheckCircle2 size={18} />
+                  ) : PAYMENT_STAGES[liveStage.stage].terminal ? (
+                    <CircleAlert size={18} />
+                  ) : (
+                    <LoaderCircle className="animate-spin" size={18} />
+                  )}
                 </span>
-                <strong className="mt-1 block text-sm">{liveStage.stage.toUpperCase()}</strong>
-                <p className="mt-1 text-xs leading-copy text-muted-foreground">
-                  {PAYMENT_STAGES[liveStage.stage].detail}
-                </p>
-                {liveStage.rule && (
-                  <code className="mt-2 block text-[10px]">Rule: {liveStage.rule}</code>
-                )}
-                {liveStage.headroomUnits && liveStage.stage === 'refused' && (
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {formatUsdc(BigInt(liveStage.headroomUnits))} USDC of headroom remained.
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="font-mono text-[9px] uppercase tracking-[.16em] text-muted-foreground">
+                        GOL payment
+                      </span>
+                      <strong className="mt-0.5 block text-base">
+                        {paymentStageTitle(liveStage.stage)}
+                      </strong>
+                    </div>
+                    {liveStage.stage === 'refused' ? (
+                      <Badge variant="warning">No USDC sent</Badge>
+                    ) : null}
+                  </div>
+                  <p className="mt-2 text-sm leading-copy text-muted-foreground">
+                    {paymentStageExplanation(liveStage, props.perPaymentCapUnits)}
                   </p>
-                )}
-                {liveStage.detail && (
-                  <p className="mt-1 text-xs leading-copy text-muted-foreground">
-                    {liveStage.detail}
-                  </p>
-                )}
-                {liveStage.warning && (
-                  <p className="mt-1 text-xs text-warning">{liveStage.warning}</p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+                  {liveStage.headroomUnits && liveStage.stage === 'refused' ? (
+                    <div className="mt-3 inline-flex rounded-full bg-muted px-3 py-1.5 text-xs">
+                      <span className="text-muted-foreground">Total limit left</span>
+                      <strong className="ml-2 font-medium text-foreground">
+                        {formatUsdc(BigInt(liveStage.headroomUnits))} USDC
+                      </strong>
+                    </div>
+                  ) : null}
+                  {liveStage.warning ? (
+                    <p className="mt-2 text-xs text-warning">{liveStage.warning}</p>
+                  ) : null}
+                </div>
+              </CardContent>
+            </Card>
+            {PAYMENT_STAGES[liveStage.stage].terminal && outcomeFollowups.payment ? (
+              <AgentOutcomeMessage followup={outcomeFollowups.payment} />
+            ) : null}
+          </>
         )}
         {props.answer && (
-          <Card data-testid="grounded-answer" className="ml-10 bg-muted shadow-none">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-2 font-mono text-[9px] uppercase tracking-[.16em] text-primary">
-                <MessageSquareText size={13} /> Indexed evidence, read only
-              </div>
-              <p className="mt-3 text-sm leading-copy text-foreground">{props.answer.text}</p>
-              <p className="mt-3 text-[10px] text-muted-foreground">
-                {props.answer.recordCount} records.{' '}
-                {props.answer.indexedBlock
-                  ? 'Indexed through block ' + props.answer.indexedBlock + '. '
-                  : ''}
-                {props.answer.deterministic ? 'Deterministic explanation' : 'Model explanation'}
-              </p>
-              {props.answer.citations.length > 0 && (
-                <div className="citations mt-3 flex flex-wrap gap-2">
-                  {props.answer.citations.map((citation) => (
-                    <a
-                      key={citation.txHash}
-                      href={citation.explorerUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="rounded-full border border-border px-2 py-1 font-mono text-[9px] text-primary"
-                    >
-                      Transaction ↗
-                    </a>
-                  ))}
+          <>
+            <Card data-testid="grounded-answer" className="ml-10 bg-muted shadow-none">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2 font-mono text-[9px] uppercase tracking-[.16em] text-primary">
+                  <MessageSquareText size={13} /> Indexed evidence, read only
                 </div>
-              )}
-            </CardContent>
-          </Card>
+                <p className="mt-3 text-sm leading-copy text-foreground">{props.answer.text}</p>
+                <p className="mt-3 text-[10px] text-muted-foreground">
+                  {props.answer.recordCount} records.{' '}
+                  {props.answer.indexedBlock
+                    ? 'Indexed through block ' + props.answer.indexedBlock + '. '
+                    : ''}
+                  {props.answer.deterministic ? 'Deterministic explanation' : 'Model explanation'}
+                </p>
+                {props.answer.citations.length > 0 && (
+                  <div className="citations mt-3 flex flex-wrap gap-2">
+                    {props.answer.citations.map((citation) => (
+                      <a
+                        key={citation.txHash}
+                        href={citation.explorerUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-full border border-border px-2 py-1 font-mono text-[9px] text-primary"
+                      >
+                        Transaction ↗
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+            {outcomeFollowups.answer ? (
+              <AgentOutcomeMessage followup={outcomeFollowups.answer} />
+            ) : null}
+          </>
         )}
+        {outcomeFollowups.owner ? <AgentOutcomeMessage followup={outcomeFollowups.owner} /> : null}
         {sending && (
           <div className="ml-10 flex items-center gap-2 text-xs text-muted-foreground">
             <LoaderCircle size={14} className="animate-spin" /> AG-UI:{' '}
@@ -979,10 +1265,217 @@ export function AgentChat(props: AgentChatProps) {
             </PromptInputActions>
           </PromptInput>
         </form>
-        <p className="mt-2 text-center text-[10px] text-muted-foreground">
-          GOL payments use Arc. Aave actions show their network before signing.
-        </p>
       </div>
     </Card>
   );
+}
+
+function paymentStageExplanation(
+  payment: NonNullable<AgentChatProps['payment']>,
+  perPaymentCapUnits: string | null,
+): string {
+  if (payment.stage !== 'refused') return PAYMENT_STAGES[payment.stage].detail;
+
+  const attempted = payment.attemptedUnits
+    ? `${formatUsdc(BigInt(payment.attemptedUnits))} USDC`
+    : 'This payment';
+  if (payment.rule === 'PER_PAYMENT_CAP' && perPaymentCapUnits) {
+    return `${attempted} is above your ${formatUsdc(BigInt(perPaymentCapUnits))} USDC per-payment limit.`;
+  }
+  if (payment.rule === 'CUMULATIVE_CAP' && payment.headroomUnits) {
+    return `${attempted} is above the ${formatUsdc(BigInt(payment.headroomUnits))} USDC remaining in your total limit.`;
+  }
+  if (payment.rule === 'RECIPIENT_NOT_ALLOWED') {
+    return 'This recipient is not approved by your payment rules.';
+  }
+  if (payment.rule === 'MANDATE_EXPIRED') {
+    return 'Your payment rules have expired. Update them before trying again.';
+  }
+  if (payment.rule === 'MANDATE_REVOKED') {
+    return 'Your payment rules are turned off. Enable them before trying again.';
+  }
+  return 'This payment was blocked by your payment rules.';
+}
+
+function paymentOutcomeFallback(payment: NonNullable<AgentChatProps['payment']>): string {
+  if (payment.stage === 'executed') {
+    return 'Your payment completed successfully. It will appear in Activity after indexing.';
+  }
+  if (payment.stage === 'refused') {
+    if (payment.rule === 'PER_PAYMENT_CAP') {
+      return 'No funds moved. Lower the amount to stay within your per-payment limit, then try again.';
+    }
+    if (payment.rule === 'CUMULATIVE_CAP') {
+      return 'No funds moved. Lower the amount or update your total payment limit before trying again.';
+    }
+    if (payment.rule === 'RECIPIENT_NOT_ALLOWED') {
+      return 'No funds moved. Choose an approved recipient or update your recipient rules.';
+    }
+    return 'No funds moved. Review your payment rules before trying again.';
+  }
+  if (payment.stage === 'needs_clarification') {
+    return 'Nothing was submitted. Send one amount and one approved recipient so I can try again.';
+  }
+  if (payment.stage === 'signer_blocked') {
+    return 'Nothing was submitted. The signer blocked this request because it did not match its permissions.';
+  }
+  if (payment.stage === 'technical_failure') {
+    return 'The transaction failed on-chain and no payment was completed. You can review the details and retry.';
+  }
+  return 'The transaction status is not confirmed yet. Check Activity before submitting another payment.';
+}
+
+function paymentOutcome(
+  payment: NonNullable<AgentChatProps['payment']>,
+  perPaymentCapUnits: string | null,
+): AgentOutcomeFollowup {
+  return {
+    kind: 'payment',
+    status: payment.stage,
+    summary: paymentStageExplanation(payment, perPaymentCapUnits),
+    facts: {
+      attemptedUsdc: payment.attemptedUnits ? formatUsdc(BigInt(payment.attemptedUnits)) : null,
+      limitLeftUsdc: payment.headroomUnits ? formatUsdc(BigInt(payment.headroomUnits)) : null,
+      rule: payment.rule,
+      detail: payment.detail || null,
+      warning: payment.warning,
+      transactionHash: payment.txHash ?? null,
+    },
+    fallback: paymentOutcomeFallback(payment),
+  };
+}
+
+function ownerTransactionFallback(transaction: TransactionState): string {
+  if (transaction.phase === 'rejected') {
+    return 'You rejected the wallet request, so nothing changed.';
+  }
+  if (transaction.phase === 'insufficient_gas') {
+    return 'The action could not start because the wallet needs more network gas.';
+  }
+  if (transaction.phase === 'reverted' || transaction.phase === 'failed') {
+    return transaction.detail
+      ? `The action failed. ${transaction.detail}`
+      : 'The action failed and no changes were completed.';
+  }
+  if (transaction.phase !== 'confirmed') return '';
+  if (transaction.kind === 'aave_action') return 'Your Aave action was confirmed on-chain.';
+  if (transaction.kind === 'fund_account') return 'Your payment funds were added successfully.';
+  if (transaction.kind === 'withdraw') return 'Your payment funds were withdrawn successfully.';
+  if (transaction.kind === 'sign_mandate') return 'Your payment rules were updated successfully.';
+  if (transaction.kind === 'revoke_mandate') return 'Agent payments are now turned off.';
+  if (transaction.kind === 'create_account') return 'Your payment account is ready.';
+  if (transaction.kind === 'provision_agent') return 'Your payment recipients are now configured.';
+  if (transaction.kind === 'fund_agent_gas') return 'The agent network fee reserve was added.';
+  return 'Your action completed successfully.';
+}
+
+function ownerTransactionOutcome(transaction: TransactionState): AgentOutcomeFollowup {
+  return {
+    kind: 'wallet_action',
+    status: transaction.phase,
+    summary: ownerTransactionFallback(transaction),
+    facts: {
+      action: transaction.kind,
+      transactionHash: transaction.hash,
+      detail: transaction.detail || null,
+    },
+    fallback: ownerTransactionFallback(transaction),
+  };
+}
+
+function indexedAnswerOutcome(answer: NonNullable<AgentChatProps['answer']>): AgentOutcomeFollowup {
+  return {
+    kind: 'query',
+    status: answer.deterministic ? 'grounded' : 'model_explanation',
+    summary: answer.text,
+    facts: {
+      records: answer.recordCount,
+      indexedBlock: answer.indexedBlock,
+      citations: answer.citations.length,
+    },
+    fallback:
+      'This is the result from your indexed activity. I can explain any transaction in more detail if you want.',
+  };
+}
+
+function aaveResultOutcome(
+  tool: string,
+  result: unknown,
+  preparedAction: boolean,
+): AgentOutcomeFollowup {
+  const extracted = extractData(result);
+  const blocked =
+    extracted !== null &&
+    typeof extracted === 'object' &&
+    'status' in extracted &&
+    extracted.status === 'blocked';
+  return {
+    kind: 'query',
+    status: blocked ? 'blocked' : preparedAction ? 'prepared' : 'complete',
+    summary: preparedAction
+      ? 'An unsigned Aave action is ready for owner review.'
+      : `The Aave ${formatToolName(tool)} query completed.`,
+    facts: Object.fromEntries(resultSummary(result)),
+    fallback: blocked
+      ? 'The Aave request could not continue. Review the result above for the required next step.'
+      : preparedAction
+        ? 'Your Aave action is ready for review. Nothing has been submitted yet.'
+        : 'Here is your Aave result. I can help you review the details or prepare the next action.',
+  };
+}
+
+function lastOutcomeId(
+  slot: string,
+  followups: Record<string, OutcomeFollowupView>,
+): string | null {
+  return followups[`${slot}:id`]?.text ?? null;
+}
+
+function persistableOutcomeFollowups(
+  followups: Record<string, OutcomeFollowupView>,
+): Record<string, string> {
+  const ownerOutcomeIsAave = followups['owner:id']?.text.startsWith('aave_action:') ?? false;
+  return Object.fromEntries(
+    Object.entries(followups).flatMap(([key, followup]) =>
+      !followup.streaming &&
+      followup.text &&
+      (ownerOutcomeIsAave || (key !== 'owner' && key !== 'owner:id'))
+        ? [[key, followup.text]]
+        : [],
+    ),
+  );
+}
+
+function restoreOutcomeFollowups(
+  followups: Record<string, string> | undefined,
+): Record<string, OutcomeFollowupView> {
+  const restored = Object.fromEntries(
+    Object.entries(followups ?? {}).map(([key, text]) => [key, { text, streaming: false }]),
+  );
+  return restored['owner:id']?.text.startsWith('aave_action:')
+    ? restored
+    : withoutOutcomeSlot(restored, 'owner');
+}
+
+function withoutOutcomeSlot(
+  followups: Record<string, OutcomeFollowupView>,
+  slot: string,
+): Record<string, OutcomeFollowupView> {
+  const next = { ...followups };
+  delete next[slot];
+  delete next[`${slot}:id`];
+  return next;
+}
+
+function paymentStageTitle(stage: keyof typeof PAYMENT_STAGES): string {
+  if (stage === 'executed') return 'Payment sent';
+  if (stage === 'refused') return 'Payment refused';
+  if (stage === 'needs_clarification') return 'Payment details needed';
+  if (stage === 'signer_blocked') return 'Payment blocked';
+  if (stage === 'technical_failure') return 'Payment failed';
+  if (stage === 'unknown') return 'Payment status unknown';
+  if (stage === 'queued') return 'Payment queued';
+  if (stage === 'signing') return 'Preparing payment';
+  if (stage === 'submitted' || stage === 'confirming') return 'Confirming payment';
+  return 'Reviewing payment';
 }

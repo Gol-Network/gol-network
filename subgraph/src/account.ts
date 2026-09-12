@@ -4,8 +4,9 @@ import {
   MandateCreated,
   MandateRevoked,
   Refused,
+  Withdrawn,
 } from '../generated/templates/GolAccount/GolAccount';
-import { Action, Mandate } from '../generated/schema';
+import { Action, LifecycleEvent, Mandate } from '../generated/schema';
 
 function mandateEntityId(account: Address, mandateId: BigInt): string {
   return account.toHexString().toLowerCase() + ':' + mandateId.toString();
@@ -13,6 +14,18 @@ function mandateEntityId(account: Address, mandateId: BigInt): string {
 
 function actionId(transactionHash: Bytes, logIndex: BigInt): Bytes {
   return transactionHash.concatI32(logIndex.toI32());
+}
+
+function lifecycleEvent(event: ethereum.Event, kind: string): LifecycleEvent {
+  const lifecycle = new LifecycleEvent(actionId(event.transaction.hash, event.logIndex));
+  lifecycle.account = event.address;
+  lifecycle.kind = kind;
+  lifecycle.transactionHash = event.transaction.hash;
+  lifecycle.blockNumber = event.block.number;
+  lifecycle.blockHash = event.block.hash;
+  lifecycle.timestamp = event.block.timestamp;
+  lifecycle.logIndex = event.logIndex;
+  return lifecycle;
 }
 
 export function handleMandateCreated(event: MandateCreated): void {
@@ -32,6 +45,11 @@ export function handleMandateCreated(event: MandateCreated): void {
   mandate.recipients = recipients;
   mandate.revoked = false;
   mandate.save();
+
+  const lifecycle = lifecycleEvent(event, 'MANDATE_CREATED');
+  lifecycle.mandateId = event.params.mandateId;
+  lifecycle.agent = event.params.agent;
+  lifecycle.save();
 }
 
 export function handleMandateRevoked(event: MandateRevoked): void {
@@ -40,6 +58,16 @@ export function handleMandateRevoked(event: MandateRevoked): void {
     mandate.revoked = true;
     mandate.save();
   }
+  const lifecycle = lifecycleEvent(event, 'MANDATE_REVOKED');
+  lifecycle.mandateId = event.params.mandateId;
+  lifecycle.agent = event.params.agent;
+  lifecycle.save();
+}
+
+export function handleWithdrawn(event: Withdrawn): void {
+  const lifecycle = lifecycleEvent(event, 'FUNDS_WITHDRAWN');
+  lifecycle.amount = event.params.amount;
+  lifecycle.save();
 }
 
 function setChainFields(action: Action, event: ethereum.Event): void {

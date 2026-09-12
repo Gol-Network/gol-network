@@ -4,6 +4,7 @@ const MAX_MESSAGES = 50;
 const MAX_TEXT_CHARACTERS = 20_000;
 const MAX_IDENTIFIER_CHARACTERS = 200;
 const MAX_TOOL_RUNS = 20;
+const MAX_FOLLOWUPS = 20;
 
 export type PersistedProtocolAction = {
   kind: 'aave' | 'mandate' | 'bridge';
@@ -36,6 +37,7 @@ export type PersistedChatMessage = {
 export type ChatHistory = {
   messages: PersistedChatMessage[];
   threadId: string | null;
+  followups?: Record<string, string> | undefined;
 };
 
 export function chatHistoryStorageKey(ownerAddress: string): string {
@@ -60,7 +62,8 @@ export function parseChatHistory(value: string | null): ChatHistory {
       .slice(-MAX_MESSAGES)
       .map(parseMessage)
       .filter((message): message is PersistedChatMessage => message !== null);
-    return { messages, threadId };
+    const followups = parseFollowups(parsed.followups);
+    return { messages, threadId, ...(followups ? { followups } : {}) };
   } catch {
     return emptyHistory();
   }
@@ -69,6 +72,7 @@ export function parseChatHistory(value: string | null): ChatHistory {
 export function serializeChatHistory(
   messages: ReadonlyArray<PersistedChatMessage & { streaming?: boolean | undefined }>,
   threadId: string | null,
+  followups?: Readonly<Record<string, string>>,
 ): string {
   let storedMessages = messages
     .slice(-MAX_MESSAGES)
@@ -76,12 +80,13 @@ export function serializeChatHistory(
     .filter((message): message is PersistedChatMessage => message !== null)
     .map(markInterruptedRunsFailed);
   const safeThreadId = optionalText(threadId, MAX_IDENTIFIER_CHARACTERS) ?? null;
+  const safeFollowups = parseFollowups(followups);
 
-  let serialized = stringify(storedMessages, safeThreadId);
+  let serialized = stringify(storedMessages, safeThreadId, safeFollowups);
   if (serialized.length <= MAX_STORED_CHARACTERS) return serialized;
 
   storedMessages = storedMessages.map(({ result: _result, ...message }) => message);
-  serialized = stringify(storedMessages, safeThreadId);
+  serialized = stringify(storedMessages, safeThreadId, safeFollowups);
   if (serialized.length <= MAX_STORED_CHARACTERS) return serialized;
 
   storedMessages = storedMessages.slice(-20).map((message) => ({
@@ -89,15 +94,36 @@ export function serializeChatHistory(
     text: message.text.slice(0, 4_000),
     handoff: undefined,
   }));
-  return stringify(storedMessages, safeThreadId);
+  return stringify(storedMessages, safeThreadId, safeFollowups);
 }
 
-function stringify(messages: PersistedChatMessage[], threadId: string | null): string {
+function stringify(
+  messages: PersistedChatMessage[],
+  threadId: string | null,
+  followups?: Record<string, string>,
+): string {
   try {
-    return JSON.stringify({ version: STORAGE_VERSION, threadId, messages });
+    return JSON.stringify({
+      version: STORAGE_VERSION,
+      threadId,
+      messages,
+      ...(followups ? { followups } : {}),
+    });
   } catch {
     return JSON.stringify({ version: STORAGE_VERSION, threadId, messages: [] });
   }
+}
+
+function parseFollowups(value: unknown): Record<string, string> | undefined {
+  if (!isRecord(value)) return undefined;
+  const entries = Object.entries(value)
+    .slice(-MAX_FOLLOWUPS)
+    .flatMap(([key, text]) => {
+      const safeKey = optionalText(key, MAX_IDENTIFIER_CHARACTERS);
+      const safeText = optionalText(text, MAX_TEXT_CHARACTERS);
+      return safeKey && safeText ? [[safeKey, safeText] as const] : [];
+    });
+  return entries.length ? Object.fromEntries(entries) : undefined;
 }
 
 function parseMessage(value: unknown): PersistedChatMessage | null {

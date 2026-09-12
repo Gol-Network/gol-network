@@ -146,7 +146,9 @@ contract GolAccount {
         if (expiresAt <= block.timestamp || expiresAt > block.timestamp + MAX_MANDATE_DURATION) {
             revert InvalidExpiry();
         }
-        if (recipients.length == 0 || recipients.length > MAX_RECIPIENTS) {
+        // An empty allowlist is an explicit "allow any recipient" mandate. A non-empty list
+        // remains an exact allowlist capped to keep mandate creation bounded.
+        if (recipients.length > MAX_RECIPIENTS) {
             revert InvalidRecipients();
         }
 
@@ -229,7 +231,7 @@ contract GolAccount {
         } else if (block.timestamp >= mandate.expiresAt) {
             rule = Rule.MANDATE_EXPIRED;
             reason = "Mandate expired";
-        } else if (!allowed[mandateId][recipient]) {
+        } else if (!_isRecipientAllowed(mandateId, recipient)) {
             rule = Rule.RECIPIENT_NOT_ALLOWED;
             reason = "Recipient not allowed";
         } else if (amount > mandate.perPaymentCap) {
@@ -348,7 +350,7 @@ contract GolAccount {
     }
 
     function isRecipientAllowed(uint256 mandateId, address recipient) external view returns (bool) {
-        return allowed[mandateId][recipient];
+        return _isRecipientAllowed(mandateId, recipient);
     }
 
     function getRequest(uint256 mandateId, bytes32 requestId)
@@ -363,6 +365,15 @@ contract GolAccount {
         Mandate storage mandate = mandates[mandateId];
         if (!mandate.exists) revert UnknownMandate(mandateId);
         return mandate.cumulativeCap - mandate.spent;
+    }
+
+    function _isRecipientAllowed(uint256 mandateId, address recipient)
+        private
+        view
+        returns (bool)
+    {
+        return mandates[mandateId].exists
+            && (mandateRecipients[mandateId].length == 0 || allowed[mandateId][recipient]);
     }
 
     function _balance() private view returns (uint256 balance) {

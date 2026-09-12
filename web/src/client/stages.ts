@@ -97,6 +97,14 @@ const ERROR_CODE_COPY: Record<string, string> = {
   MANDATE_NOT_ACTIVE: 'This mandate is no longer the active one on the account.',
   MANDATE_AGENT_MISMATCH:
     'The active mandate does not name the current agent signer. Sign a new mandate.',
+  AGENT_POLICY_MIGRATION_REQUIRED:
+    'The agent signer was rotated. Review recipients and approve a replacement payment rule.',
+  PRIVY_WALLET_NOT_FOUND:
+    'The previous agent signer is no longer available. Review recipients and approve a replacement payment rule.',
+  SIGNER_CONTEXT_NOT_FOUND:
+    'The verified agent signer context is unavailable. Nothing was submitted.',
+  SIGNER_CONTEXT_UNAVAILABLE:
+    'The payment worker could not load the verified signer context. Nothing was submitted.',
   BROADCAST_AMBIGUOUS:
     'The network response was unresolved. This is not a failure; refresh to reconcile.',
   RECONCILIATION_PENDING: 'Waiting on the receipt that decides the outcome. Refresh to reconcile.',

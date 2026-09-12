@@ -31,4 +31,5 @@ export const erc20Abi = parseAbi([
   'function decimals() view returns (uint8)',
   'function balanceOf(address account) view returns (uint256)',
   'function transfer(address recipient,uint256 amount) returns (bool)',
+  'event Transfer(address indexed from,address indexed to,uint256 value)',
 ]);

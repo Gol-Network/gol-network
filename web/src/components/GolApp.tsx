@@ -39,6 +39,8 @@ import type {
   MandateDraft,
   OwnerActionKind,
   PaymentStage,
+  RecipientDraft,
+  RecipientMode,
   RequestSnapshot,
   TransactionState,
 } from '@/client/types';
@@ -47,11 +49,21 @@ import { deriveSteps } from './setup-steps';
 
 const SEVEN_DAYS_SECONDS = 7 * 24 * 60 * 60;
 
-export function GolApp({ config }: { config: PublicConfig }) {
-  return config.privyAppId ? <PrivyGolApp config={config} /> : <FixtureGolApp config={config} />;
+export function GolApp({
+  config,
+  forceLoading = false,
+}: {
+  config: PublicConfig;
+  forceLoading?: boolean;
+}) {
+  return config.privyAppId ? (
+    <PrivyGolApp config={config} forceLoading={forceLoading} />
+  ) : (
+    <FixtureGolApp config={config} forceLoading={forceLoading} />
+  );
 }
 
-function PrivyGolApp({ config }: { config: PublicConfig }) {
+function PrivyGolApp({ config, forceLoading }: { config: PublicConfig; forceLoading: boolean }) {
   const { ready, authenticated, logout, user, getAccessToken } = usePrivy();
   const [authError, setAuthError] = useState<string | null>(null);
   const [walletActionError, setWalletActionError] = useState<string | null>(null);
@@ -84,8 +96,8 @@ function PrivyGolApp({ config }: { config: PublicConfig }) {
   // finished hydrating. Treating that provisional wallet as the owner briefly loads a different
   // account and flashes onboarding. Only select an owner from the complete wallet collection.
   const activeOwnerWallet = walletsReady
-    ? (wallets.find((wallet) => wallet.walletClientType === 'privy') ??
-      wallets.find((wallet) => wallet.address.toLowerCase() === userWalletAddress) ??
+    ? (wallets.find((wallet) => wallet.address.toLowerCase() === userWalletAddress) ??
+      wallets.find((wallet) => wallet.walletClientType === 'privy') ??
       wallets[0] ??
       null)
     : null;
@@ -199,11 +211,12 @@ function PrivyGolApp({ config }: { config: PublicConfig }) {
       auth={auth}
       backend={backend}
       enabled={ready && walletsReady && authenticated && ownerAddress !== null}
+      forceLoading={forceLoading}
     />
   );
 }
 
-function FixtureGolApp({ config }: { config: PublicConfig }) {
+function FixtureGolApp({ config, forceLoading }: { config: PublicConfig; forceLoading: boolean }) {
   const backendRef = useRef<GolBackend | null>(null);
   if (backendRef.current === null) backendRef.current = createFixtureBackend(config);
   const [started, setStarted] = useState(false);
@@ -219,7 +232,13 @@ function FixtureGolApp({ config }: { config: PublicConfig }) {
     exportWallet: async () => undefined,
   };
   return (
-    <GolExperience config={config} auth={auth} backend={backendRef.current} enabled={started} />
+    <GolExperience
+      config={config}
+      auth={auth}
+      backend={backendRef.current}
+      enabled={started}
+      forceLoading={forceLoading}
+    />
   );
 }
 
@@ -265,11 +284,13 @@ function GolExperience({
   auth,
   backend,
   enabled,
+  forceLoading,
 }: {
   config: PublicConfig;
   auth: AuthState;
   backend: GolBackend;
   enabled: boolean;
+  forceLoading: boolean;
 }) {
   const [account, setAccount] = useState<AccountSnapshot | null>(null);
   const [accountLoaded, setAccountLoaded] = useState(false);
@@ -281,9 +302,12 @@ function GolExperience({
     detail: '',
   });
   const [busy, setBusy] = useState<OwnerActionKind | null>(null);
-  const [recipientLabelInput, setRecipientLabelInput] = useState('');
-  const [recipientInput, setRecipientInput] = useState('');
+  const [recipientDrafts, setRecipientDrafts] = useState<RecipientDraft[]>([
+    { label: '', address: '' },
+  ]);
+  const [recipientMode, setRecipientMode] = useState<RecipientMode>('allowlist');
   const [consentOpen, setConsentOpen] = useState(false);
+  const [paymentBudgetPending, setPaymentBudgetPending] = useState(false);
   const [transferReview, setTransferReview] = useState<TransferReview | null>(null);
   const [mandateReview, setMandateReview] = useState<MandateDraft | null>(null);
 
@@ -293,10 +317,13 @@ function GolExperience({
 
   const [page, setPage] = useState<ActivityPage | null>(null);
   const [lastGoodPage, setLastGoodPage] = useState<ActivityPage | null>(null);
+  const [activityLoading, setActivityLoading] = useState(false);
   const [pending, setPending] = useState<PendingActivity[]>([]);
   const [indexingWindowClosed, setIndexingWindowClosed] = useState(false);
   const [checkingIndexing, setCheckingIndexing] = useState(false);
   const pendingRef = useRef<PendingActivity[]>([]);
+  const mountedRef = useRef(true);
+  const pollingRequestsRef = useRef(new Set<string>());
 
   const [question, setQuestion] = useState('What was this agent refused, and why?');
   const [answer, setAnswer] = useState<GroundedAnswer | null>(null);
@@ -306,9 +333,27 @@ function GolExperience({
   accountRef.current = account;
 
   useEffect(() => {
-    setRecipientLabelInput('');
-    setRecipientInput('');
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    setRecipientDrafts([{ label: '', address: '' }]);
+    setRecipientMode('allowlist');
   }, [auth.ownerAddress]);
+
+  useEffect(() => {
+    if (!consentOpen) return;
+    const current = accountRef.current;
+    const confirmed =
+      current?.recipients
+        .filter((recipient) => recipient.confirmed)
+        .map(({ label, address }) => ({ label, address })) ?? [];
+    setRecipientMode(current?.recipientMode ?? 'allowlist');
+    setRecipientDrafts(confirmed.length > 0 ? confirmed : [{ label: '', address: '' }]);
+  }, [consentOpen]);
 
   const refreshAccount = useCallback(async () => {
     if (!enabled) {
@@ -379,6 +424,7 @@ function GolExperience({
       setPending([]);
       setPage(null);
       setLastGoodPage(null);
+      setActivityLoading(false);
       return;
     }
     let cancelled = false;
@@ -403,7 +449,10 @@ function GolExperience({
       pendingRef.current = restored;
       setPending(restored);
     })();
-    void refreshActivity(accountAddress);
+    setActivityLoading(true);
+    void refreshActivity(accountAddress).finally(() => {
+      if (!cancelled) setActivityLoading(false);
+    });
     return () => {
       cancelled = true;
     };
@@ -431,65 +480,75 @@ function GolExperience({
 
   const pollRequest = useCallback(
     async (requestId: string) => {
-      for (let attempt = 0; attempt < 60; attempt += 1) {
-        let snapshot;
-        try {
-          snapshot = await backend.getRequest(requestId);
-        } catch (error) {
-          // Keep the last confirmed view. A failed poll is not a payment outcome.
-          setPayment((current) => ({ ...current, warning: message(error) }));
-          await pause(2_000);
-          continue;
-        }
-        const stage = stageFromJournal(snapshot.state);
-        setPayment({
-          stage,
-          requestId,
-          txHash: snapshot.txHash,
-          explorerUrl: snapshot.explorerUrl,
-          rule: snapshot.rule,
-          attemptedUnits: snapshot.attemptedUnits,
-          headroomUnits: snapshot.headroomUnits,
-          detail: errorCodeCopy(snapshot.errorCode),
-          warning: null,
-        });
-        if (isTerminalStage(stage)) {
-          const linked = accountRef.current?.accountAddress;
-          if ((stage === 'executed' || stage === 'refused') && snapshot.txHash) {
-            const overlay = pendingActivityFromSnapshot(snapshot, Date.now());
-            if (overlay) {
-              const current = pendingRef.current;
-              const next = current.some((entry) => entry.requestId === overlay.requestId)
-                ? current
-                : [overlay, ...current];
-              pendingRef.current = next;
-              setPending(next);
-              if (linked) persistPendingActivities(linked, next);
-            }
+      if (pollingRequestsRef.current.has(requestId)) return;
+      pollingRequestsRef.current.add(requestId);
+      let attempt = 0;
+      try {
+        while (mountedRef.current) {
+          let snapshot;
+          try {
+            snapshot = await backend.getRequest(requestId);
+          } catch (error) {
+            // Keep the last confirmed view. A failed poll is not a payment outcome.
+            setPayment((current) => ({ ...current, warning: message(error) }));
+            await pause(attempt < 30 ? 2_000 : 5_000);
+            attempt += 1;
+            continue;
           }
-          if (linked) window.localStorage.removeItem(pendingRequestKey(linked));
-          const refreshed = await refreshAccount();
-          await refreshActivity(refreshed?.accountAddress ?? accountRef.current?.accountAddress);
-          return;
+          const stage = stageFromJournal(snapshot.state);
+          setPayment({
+            stage,
+            requestId,
+            txHash: snapshot.txHash,
+            explorerUrl: snapshot.explorerUrl,
+            rule: snapshot.rule,
+            attemptedUnits: snapshot.attemptedUnits,
+            headroomUnits: snapshot.headroomUnits,
+            detail: errorCodeCopy(snapshot.errorCode),
+            warning:
+              attempt >= 30
+                ? 'Payment processing is delayed. Recovery is continuing automatically.'
+                : null,
+          });
+          if (isTerminalStage(stage)) {
+            const linked = accountRef.current?.accountAddress;
+            if ((stage === 'executed' || stage === 'refused') && snapshot.txHash) {
+              const overlay = pendingActivityFromSnapshot(snapshot, Date.now());
+              if (overlay) {
+                const current = pendingRef.current;
+                const next = current.some((entry) => entry.requestId === overlay.requestId)
+                  ? current
+                  : [overlay, ...current];
+                pendingRef.current = next;
+                setPending(next);
+                if (linked) persistPendingActivities(linked, next);
+              }
+            }
+            if (linked) window.localStorage.removeItem(pendingRequestKey(linked));
+            const refreshed = await refreshAccount();
+            await refreshActivity(refreshed?.accountAddress ?? accountRef.current?.accountAddress);
+            return;
+          }
+          await pause(attempt < 30 ? 2_000 : 5_000);
+          attempt += 1;
         }
-        await pause(2_000);
+      } finally {
+        pollingRequestsRef.current.delete(requestId);
       }
-      setPayment((current) => ({
-        ...current,
-        warning: 'Still pending. This request recovers after a refresh.',
-      }));
     },
     [backend, refreshAccount, refreshActivity],
   );
 
   // Recover a non-terminal request after a reload.
-  const recoveredRef = useRef<string | null>(null);
   useEffect(() => {
     if (!enabled || !accountAddress) return;
     const stored = window.localStorage.getItem(pendingRequestKey(accountAddress));
-    if (!stored || recoveredRef.current === stored) return;
-    recoveredRef.current = stored;
-    setPayment({ ...IDLE_PAYMENT, stage: 'queued', requestId: stored });
+    if (!stored) return;
+    setPayment((current) =>
+      current.requestId === stored
+        ? current
+        : { ...IDLE_PAYMENT, stage: 'queued', requestId: stored },
+    );
     void pollRequest(stored);
   }, [enabled, accountAddress, pollRequest]);
 
@@ -542,8 +601,14 @@ function GolExperience({
   );
 
   const steps = useMemo(
-    () => deriveSteps({ config, authenticated: auth.authenticated && enabled, account }),
-    [config, auth.authenticated, enabled, account],
+    () =>
+      deriveSteps({
+        config,
+        authenticated: auth.authenticated && enabled,
+        account,
+        paymentBudgetPending,
+      }),
+    [config, auth.authenticated, enabled, account, paymentBudgetPending],
   );
 
   useEffect(() => {
@@ -559,17 +624,32 @@ function GolExperience({
   }
 
   async function onProvisionAgent() {
-    const parsed = recipientLabelSchema.safeParse({
-      label: recipientLabelInput,
-      address: normalizeAddress(recipientInput),
-    });
     const current = accountRef.current;
-    if (!parsed.success || !current?.accountAddress) {
+    const parsedRecipients = recipientDrafts.map((recipient) =>
+      recipientLabelSchema.safeParse({
+        label: recipient.label,
+        address: normalizeAddress(recipient.address),
+      }),
+    );
+    const recipients = parsedRecipients.flatMap((result) => (result.success ? [result.data] : []));
+    const uniqueAddresses = new Set(recipients.map((recipient) => recipient.address.toLowerCase()));
+    const uniqueLabels = new Set(recipients.map((recipient) => recipient.label.toLowerCase()));
+    const invalidAllowlist =
+      recipientMode === 'allowlist' &&
+      (recipientDrafts.length === 0 ||
+        recipientDrafts.length > 20 ||
+        recipients.length !== recipientDrafts.length ||
+        uniqueAddresses.size !== recipients.length ||
+        uniqueLabels.size !== recipients.length);
+    if (!current?.accountAddress || invalidAllowlist) {
       setTx({
         kind: 'provision_agent',
         phase: 'failed',
         hash: null,
-        detail: 'Enter a recipient name and the exact wallet address this agent may pay.',
+        detail:
+          uniqueAddresses.size !== recipients.length || uniqueLabels.size !== recipients.length
+            ? 'Each approved recipient must use a different name and wallet address.'
+            : 'Complete every recipient name and exact wallet address (maximum 20).',
       });
       return;
     }
@@ -578,10 +658,11 @@ function GolExperience({
       await backend.provisionAgent(
         current.accountAddress!,
         current.ownerAddress,
-        parsed.data.address,
-        parsed.data.label,
+        recipientMode,
+        recipientMode === 'allowlist' ? recipients : [],
       );
     });
+    setRecipientDrafts([{ label: '', address: '' }]);
   }
 
   function onReviewAgentGas() {
@@ -616,35 +697,45 @@ function GolExperience({
     cumulativeCapUnits: string,
   ) {
     const current = accountRef.current;
-    const recipient = current?.recipients[0];
-    if (!current?.accountAddress || !current.agentAddress || !recipient) return;
+    const recipients = current?.recipients.filter((recipient) => recipient.confirmed) ?? [];
+    if (
+      !current?.accountAddress ||
+      !current.agentAddress ||
+      (current.recipientMode === 'allowlist' && recipients.length === 0)
+    )
+      return;
 
-    const funded = await runOwnerAction('fund_account', async (reporter) =>
-      backend.fundAccount(current.accountAddress!, BigInt(amountUnits), (update) =>
-        reporter({
-          ...update,
-          detail: update.detail ?? 'Approval 1 of 2: add payment funds.',
-        }),
-      ),
-    );
-    if (!funded) return;
+    setPaymentBudgetPending(true);
+    try {
+      const funded = await runOwnerAction('fund_account', async (reporter) =>
+        backend.fundAccount(current.accountAddress!, BigInt(amountUnits), (update) =>
+          reporter({
+            ...update,
+            detail: update.detail ?? 'Approval 1 of 2: add payment funds.',
+          }),
+        ),
+      );
+      if (!funded) return;
 
-    const draft: MandateDraft = {
-      agent: current.agentAddress,
-      recipient: recipient.address,
-      recipientLabel: recipient.label,
-      perPaymentCapUnits,
-      cumulativeCapUnits,
-      expiresAt: String(Math.floor(Date.now() / 1_000) + SEVEN_DAYS_SECONDS),
-    };
-    await runOwnerAction('sign_mandate', async (reporter) =>
-      backend.signMandate(current.accountAddress!, draft, (update) =>
-        reporter({
-          ...update,
-          detail: update.detail ?? 'Approval 2 of 2: save payment rules.',
-        }),
-      ),
-    );
+      const draft: MandateDraft = {
+        agent: current.agentAddress,
+        recipients,
+        allowAnyRecipient: current.recipientMode === 'all',
+        perPaymentCapUnits,
+        cumulativeCapUnits,
+        expiresAt: String(Math.floor(Date.now() / 1_000) + SEVEN_DAYS_SECONDS),
+      };
+      await runOwnerAction('sign_mandate', async (reporter) =>
+        backend.signMandate(current.accountAddress!, draft, (update) =>
+          reporter({
+            ...update,
+            detail: update.detail ?? 'Approval 2 of 2: save payment rules.',
+          }),
+        ),
+      );
+    } finally {
+      setPaymentBudgetPending(false);
+    }
   }
 
   function onReviewWithdraw(amountUnits: string) {
@@ -679,12 +770,16 @@ function GolExperience({
 
   function onReviewMandate() {
     const current = accountRef.current;
-    const recipient = current?.recipients[0];
-    if (!current?.agentAddress || !recipient) return;
+    const recipients = current?.recipients.filter((recipient) => recipient.confirmed) ?? [];
+    if (
+      !current?.agentAddress ||
+      (current.recipientMode === 'allowlist' && recipients.length === 0)
+    )
+      return;
     setMandateReview({
       agent: current.agentAddress,
-      recipient: recipient.address,
-      recipientLabel: recipient.label,
+      recipients,
+      allowAnyRecipient: current.recipientMode === 'all',
       perPaymentCapUnits: config.accountTargetUnits,
       cumulativeCapUnits: config.accountTargetUnits,
       expiresAt: String(Math.floor(Date.now() / 1_000) + SEVEN_DAYS_SECONDS),
@@ -728,7 +823,12 @@ function GolExperience({
     setPayment({ ...IDLE_PAYMENT, stage: 'parsing' });
     const submittedInstruction = instructionOverride ?? instruction;
     if (instructionOverride) setInstruction(instructionOverride);
-    const parsed = await parseInstruction(submittedInstruction, current.recipients);
+    const parsed = await parseInstruction(
+      submittedInstruction,
+      current.recipients,
+      undefined,
+      current.recipientMode === 'all',
+    );
     if (parsed.kind === 'clarification') {
       setPreview(null);
       setPayment({ ...IDLE_PAYMENT, stage: 'needs_clarification', detail: parsed.message });
@@ -737,7 +837,7 @@ function GolExperience({
     const recipient = current.recipients.find(
       (entry) => entry.address.toLowerCase() === parsed.intent.recipient.toLowerCase(),
     );
-    if (!recipient) {
+    if (!recipient && current.recipientMode !== 'all') {
       setPreview(null);
       setPayment({
         ...IDLE_PAYMENT,
@@ -750,7 +850,7 @@ function GolExperience({
       requestId: randomRequestId(),
       amountUsdc: parsed.intent.amountUsdc,
       recipient: parsed.intent.recipient,
-      recipientLabel: recipient.label,
+      recipientLabel: recipient?.label ?? shortenAddress(parsed.intent.recipient),
       mandateId: current.activeMandateId,
     });
     setPayment(IDLE_PAYMENT);
@@ -820,15 +920,15 @@ function GolExperience({
     config,
     auth,
     account,
-    accountLoading: auth.authenticated && !accountLoaded,
+    accountLoading: forceLoading || (auth.authenticated && !accountLoaded),
     accountError,
     steps,
     tx,
     busy,
-    recipientLabelInput,
-    setRecipientLabelInput,
-    recipientInput,
-    setRecipientInput,
+    recipientDrafts,
+    setRecipientDrafts,
+    recipientMode,
+    setRecipientMode,
     consentOpen,
     setConsentOpen,
     mandateReview,
@@ -858,9 +958,15 @@ function GolExperience({
     onPreview: (instructionOverride) => void onPreview(instructionOverride),
     onSubmitInstruction: () => void onSubmitInstruction(),
     onCancelPreview: () => setPreview(null),
+    onClearConversation: () => {
+      setAnswer(null);
+      setQuestion('');
+      setPreview(null);
+    },
     payment,
     page,
     lastGoodPage,
+    activityLoading,
     pending,
     indexingWindowClosed,
     checkingIndexing,
@@ -937,6 +1043,10 @@ function randomRequestId() {
   return `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
 }
 
+function shortenAddress(address: string) {
+  return `${address.slice(0, 8)}...${address.slice(-4)}`;
+}
+
 function ownerActionStateConverged(
   kind: OwnerActionKind,
   before: AccountSnapshot | null,
@@ -948,8 +1058,7 @@ function ownerActionStateConverged(
     return (
       after.linked &&
       Boolean(after.agentAddress) &&
-      after.recipients.length === 1 &&
-      after.recipients[0]?.confirmed === true
+      (after.recipientMode === 'all' || after.recipients.some((recipient) => recipient.confirmed))
     );
   }
   if (kind === 'fund_agent_gas') {

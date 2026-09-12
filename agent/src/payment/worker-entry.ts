@@ -30,7 +30,10 @@ for (const name of baseRequired) {
 }
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
-const journal = new PgJournal(pool);
+// A worker must never lease jobs that require a different signer backend. Besides avoiding noisy
+// retries, this keeps a local Privy worker from interfering with production KMS-owned requests in
+// a shared journal.
+const journal = new PgJournal(pool, provider);
 const rpcUrl = process.env.ARC_RPC_URL!;
 
 // -------------------------------------------------------------------------------------------------
@@ -96,7 +99,7 @@ const resolver: WorkerContextResolver = {
     const result = await pool.query(
       `SELECT a.user_subject, a.account_address, a.agent_wallet_id, a.agent_address, a.policy_id,
               a.policy_version, a.signer_provider, a.signer_key_arn, a.signer_region,
-              a.signer_address,
+              a.signer_address, a.recipient_mode,
               r.address AS recipient_address, r.label
        FROM account_links a
        LEFT JOIN recipients r
@@ -125,6 +128,7 @@ const resolver: WorkerContextResolver = {
           address: addressSchema.parse(String(row.recipient_address).trim()),
           label: String(row.label),
         })),
+      allowAnyRecipient: String(link.recipient_mode ?? 'allowlist') === 'all',
       chain: new ViemPaymentChain(rpcUrl),
       ...(process.env.OPENAI_API_KEY
         ? { model: new OpenAIJsonModel({ apiKey: process.env.OPENAI_API_KEY }) }

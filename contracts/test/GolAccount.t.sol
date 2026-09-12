@@ -271,10 +271,11 @@ contract GolAccountTest is TestBase {
         vm.prank(OWNER);
         account.createMandate(AGENT, 1, 1, expiry, recipients);
 
-        recipients = new address[](0);
+        recipients = new address[](21);
         vm.expectRevert(GolAccount.InvalidRecipients.selector);
         vm.prank(OWNER);
         account.createMandate(AGENT, 1, 1, expiry, recipients);
+
         vm.expectRevert(GolAccount.InvalidCaps.selector);
         vm.prank(OWNER);
         account.createMandate(AGENT, 2, 1, expiry, _recipients());
@@ -282,6 +283,21 @@ contract GolAccountTest is TestBase {
         vm.prank(OWNER);
         account.createMandate(AGENT, 1, 1, uint64(block.timestamp), _recipients());
         assertEq(account.activeMandateId(), mandateId);
+    }
+
+    function test_EmptyRecipientListExplicitlyAllowsAnyAddress() public {
+        address[] memory recipients = new address[](0);
+        vm.prank(OWNER);
+        uint256 id = account.createMandate(AGENT, 10_000_000, 20_000_000, expiry, recipients);
+
+        address arbitraryRecipient = address(0xCAFE);
+        assertEq(account.isRecipientAllowed(id, arbitraryRecipient), true);
+        vm.prank(AGENT);
+        GolAccount.Outcome outcome =
+            account.pay(id, bytes32(uint256(9001)), arbitraryRecipient, 10_000_000);
+
+        assertEq(uint256(outcome), uint256(GolAccount.Outcome.EXECUTED));
+        assertEq(token.balanceOf(arbitraryRecipient), 10_000_000);
     }
 
     function _createMandate(uint256 perPayment, uint256 cumulative, uint64 expiresAt)

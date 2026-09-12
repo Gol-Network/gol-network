@@ -101,8 +101,27 @@ export interface ActivityRecord {
   logIndex: string;
 }
 
+export type LifecycleEventKind =
+  'ACCOUNT_CREATED' | 'FUNDS_ADDED' | 'FUNDS_WITHDRAWN' | 'MANDATE_CREATED' | 'MANDATE_REVOKED';
+
+export interface LifecycleEventRecord {
+  eventId: Hex;
+  account: Address;
+  kind: LifecycleEventKind;
+  amountUnits: string | null;
+  mandateId: string | null;
+  agent: Address | null;
+  transactionHash: Hex32;
+  blockNumber: string;
+  blockHash: Hex32;
+  timestamp: string;
+  logIndex: string;
+}
+
 export interface ActivityPage {
   records: ActivityRecord[];
+  /** Account lifecycle events are indexed separately so payment evidence pagination stays stable. */
+  lifecycleEvents?: LifecycleEventRecord[];
   cursor: string | null;
   indexedBlock: string | null;
   indexedBlockHash: Hex32 | null;

@@ -37,7 +37,10 @@ export class RequestNotFoundError extends Error {
 }
 
 export class PgJournal {
-  constructor(private readonly pool: Pool) {}
+  constructor(
+    private readonly pool: Pool,
+    private readonly signerProvider?: 'privy' | 'aws_kms',
+  ) {}
 
   async enqueue(input: {
     userSubject: string;
@@ -103,6 +106,7 @@ export class PgJournal {
              OR (r.state = 'unknown' AND (r.tx_hash IS NOT NULL OR r.provider_operation_id IS NOT NULL))
            )
              AND (r.lease_until IS NULL OR r.lease_until < now())
+             AND ($3::text IS NULL OR COALESCE(a.signer_provider, 'privy') = $3)
              AND pg_try_advisory_xact_lock(hashtextextended(a.agent_address, 0))
            ORDER BY r.created_at
            FOR UPDATE OF r SKIP LOCKED
@@ -113,7 +117,7 @@ export class PgJournal {
          FROM candidate
          WHERE r.id = candidate.id
          RETURNING r.*`,
-        [workerId, leaseSeconds],
+        [workerId, leaseSeconds, this.signerProvider ?? null],
       );
       return result.rowCount === 1 ? mapRow(result.rows[0]) : null;
     });

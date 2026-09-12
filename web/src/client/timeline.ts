@@ -1,4 +1,4 @@
-import type { ActivityPage, ActivityRecord } from '@gol/protocol';
+import type { ActivityPage, ActivityRecord, LifecycleEventRecord } from '@gol/protocol';
 
 /**
  * A confirmed on-chain outcome that The Graph has not indexed yet. It is created from the
@@ -26,7 +26,8 @@ export interface PendingActivityReference {
 
 export type TimelineEntry =
   | { kind: 'indexed'; key: string; record: ActivityRecord }
-  | { kind: 'pending'; key: string; pending: PendingActivity };
+  | { kind: 'pending'; key: string; pending: PendingActivity }
+  | { kind: 'lifecycle'; key: string; event: LifecycleEventRecord };
 
 export type TimelineFilter = 'ALL' | 'EXECUTED' | 'REFUSED';
 
@@ -79,6 +80,7 @@ function isPendingActivityReference(value: unknown): value is PendingActivityRef
 export function mergeTimeline(
   records: readonly ActivityRecord[],
   pending: readonly PendingActivity[],
+  lifecycleEvents: readonly LifecycleEventRecord[] = [],
 ): TimelineEntry[] {
   const seenActions = new Set<string>();
   const indexed: TimelineEntry[] = [];
@@ -104,7 +106,15 @@ export function mergeTimeline(
     overlays.push({ kind: 'pending', key: `pending:${key}`, pending: entry });
   }
 
-  return [...overlays, ...indexed];
+  const lifecycle: TimelineEntry[] = lifecycleEvents.map((event) => ({
+    kind: 'lifecycle',
+    key: `lifecycle:${lower(event.eventId)}`,
+    event,
+  }));
+  const onChain = [...indexed, ...lifecycle].sort(
+    (left, right) => timelineTimestamp(right) - timelineTimestamp(left),
+  );
+  return [...overlays, ...onChain];
 }
 
 export function filterTimeline(
@@ -113,8 +123,17 @@ export function filterTimeline(
 ): TimelineEntry[] {
   if (filter === 'ALL') return [...entries];
   return entries.filter((entry) =>
-    entry.kind === 'indexed' ? entry.record.outcome === filter : entry.pending.outcome === filter,
+    entry.kind === 'indexed'
+      ? entry.record.outcome === filter
+      : entry.kind === 'pending'
+        ? entry.pending.outcome === filter
+        : false,
   );
+}
+
+function timelineTimestamp(entry: TimelineEntry): number {
+  if (entry.kind === 'pending') return entry.pending.confirmedAt;
+  return Number(entry.kind === 'indexed' ? entry.record.timestamp : entry.event.timestamp) * 1_000;
 }
 
 export function isIndexed(page: ActivityPage | null, entry: PendingActivity): boolean {

@@ -54,3 +54,26 @@ query Activity(
     deployment
   }
 }
+
+query AccountLifecycle($account: Bytes!, $first: Int!) {
+  lifecycleEvents(
+    first: $first
+    orderBy: timestamp
+    orderDirection: desc
+    where: { account: $account }
+  ) {
+    id
+    account {
+      id
+    }
+    kind
+    amount
+    mandateId
+    agent
+    transactionHash
+    blockNumber
+    blockHash
+    timestamp
+    logIndex
+  }
+}

@@ -32,6 +32,7 @@ function snapshot(linked: boolean): AccountSnapshot {
     linked,
     policyId: 'policy-id',
     policyDisclosure: null,
+    recipientMode: 'allowlist',
     recipients: [
       {
         address: address('6'),
@@ -54,6 +55,7 @@ function snapshot(linked: boolean): AccountSnapshot {
       spentUnits: '0',
       expiresAt: '9999999999',
       revoked: false,
+      allowAnyRecipient: false,
     },
   };
 }
@@ -93,6 +95,33 @@ describe('setup step derivation', () => {
     });
   });
 
+  it('accepts multiple recipients only when the mandate allows every confirmed address', () => {
+    const account = snapshot(true);
+    account.balances.agentGasWei = '1';
+    account.recipients.push({
+      address: address('7'),
+      label: 'Operations vendor',
+      confirmed: true,
+      allowedByActiveMandate: true,
+    });
+    expect(deriveSteps({ config, authenticated: true, account }).at(-1)?.status).toBe('complete');
+
+    account.recipients[1]!.allowedByActiveMandate = false;
+    expect(deriveSteps({ config, authenticated: true, account }).at(-1)?.status).toBe('current');
+  });
+
+  it('accepts allow-all mode only when the on-chain mandate is also allow-all', () => {
+    const account = snapshot(true);
+    account.recipientMode = 'all';
+    account.recipients = [];
+    account.balances.agentGasWei = '1';
+    account.mandate!.allowAnyRecipient = true;
+    expect(deriveSteps({ config, authenticated: true, account }).at(-1)?.status).toBe('complete');
+
+    account.mandate!.allowAnyRecipient = false;
+    expect(deriveSteps({ config, authenticated: true, account }).at(-1)?.status).toBe('current');
+  });
+
   it('requires a new mandate after the restricted agent is rotated', () => {
     const account = snapshot(true);
     account.agentAddress = address('5');
@@ -129,5 +158,23 @@ describe('setup step derivation', () => {
       actionLabel: 'Set payment budget',
       status: 'current',
     });
+  });
+
+  it('keeps setup visible until both payment-budget approvals finish', () => {
+    const account = snapshot(true);
+    account.balances.agentGasWei = '1';
+
+    const steps = deriveSteps({
+      config,
+      authenticated: true,
+      account,
+      paymentBudgetPending: true,
+    });
+
+    expect(steps.find((step) => step.id === 'account_funded')).toMatchObject({
+      status: 'current',
+      detail: 'Complete both wallet approvals before GOL marks the agent ready.',
+    });
+    expect(steps.find((step) => step.id === 'mandate')?.status).toBe('todo');
   });
 });

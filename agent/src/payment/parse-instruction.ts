@@ -24,6 +24,7 @@ export async function parseInstruction(
   text: string,
   recipients: RecipientLabel[],
   model?: JsonModel,
+  allowAnyRecipient = false,
 ): Promise<ParseResult> {
   const input = text.trim();
   if (input.length === 0 || input.length > MAX_INSTRUCTION_LENGTH) {
@@ -33,7 +34,7 @@ export async function parseInstruction(
     };
   }
 
-  const deterministic = parseDeterministically(input, recipients);
+  const deterministic = parseDeterministically(input, recipients, allowAnyRecipient);
   if (deterministic !== null || model === undefined) {
     return (
       deterministic ?? {
@@ -44,9 +45,14 @@ export async function parseInstruction(
   }
 
   const raw = await model.completeJson<unknown>({
-    instructions:
-      'Parse one Arc testnet USDC payment using only the supplied approved recipients. Unknown or ambiguous labels require clarification. Never guess, split, reduce, or decide contract policy.',
-    input: JSON.stringify({ instruction: input, approvedRecipients: recipients }),
+    instructions: allowAnyRecipient
+      ? 'Parse one Arc testnet USDC payment. The destination must be an exact 0x address supplied by the user. Never guess, split, reduce, or decide contract policy.'
+      : 'Parse one Arc testnet USDC payment using only the supplied approved recipients. Unknown or ambiguous labels require clarification. Never guess, split, reduce, or decide contract policy.',
+    input: JSON.stringify({
+      instruction: input,
+      recipientPolicy: allowAnyRecipient ? 'any-exact-address' : 'allowlist',
+      approvedRecipients: recipients,
+    }),
     name: 'gol_payment_intent',
     schema: {
       type: 'object',
@@ -61,10 +67,14 @@ export async function parseInstruction(
     },
     maxOutputTokens: 250,
   });
-  return validateModelResult(raw, recipients);
+  return validateModelResult(raw, recipients, allowAnyRecipient);
 }
 
-function parseDeterministically(text: string, recipients: RecipientLabel[]): ParseResult | null {
+function parseDeterministically(
+  text: string,
+  recipients: RecipientLabel[],
+  allowAnyRecipient: boolean,
+): ParseResult | null {
   // "Pay", "Send", or "Transfer" <amount> USDC to <approved label or address>.
   const match = /^(?:pay|send|transfer)\s+([^\s]+)\s+usdc\s+to\s+(.+)$/i.exec(text);
   if (!match) return null;
@@ -80,6 +90,9 @@ function parseDeterministically(text: string, recipients: RecipientLabel[]): Par
   }
 
   const byAddress = addressSchema.safeParse(requestedRecipient);
+  if (allowAnyRecipient && byAddress.success) {
+    return { kind: 'payment', intent: { recipient: byAddress.data, amountUsdc } };
+  }
   const matches = byAddress.success
     ? recipients.filter((entry) => entry.address.toLowerCase() === byAddress.data.toLowerCase())
     : recipients.filter((entry) => entry.label.toLowerCase() === requestedRecipient.toLowerCase());
@@ -92,7 +105,11 @@ function parseDeterministically(text: string, recipients: RecipientLabel[]): Par
   return { kind: 'payment', intent: { recipient: matches[0]!.address, amountUsdc } };
 }
 
-function validateModelResult(raw: unknown, recipients: RecipientLabel[]): ParseResult {
+function validateModelResult(
+  raw: unknown,
+  recipients: RecipientLabel[],
+  allowAnyRecipient: boolean,
+): ParseResult {
   const parsed = parsedSchema.safeParse(raw);
   if (!parsed.success) {
     return { kind: 'clarification', message: 'The instruction could not be parsed safely.' };
@@ -124,7 +141,7 @@ function validateModelResult(raw: unknown, recipients: RecipientLabel[]): ParseR
   const approved = recipients.some(
     (entry) => entry.address.toLowerCase() === intent.data.recipient.toLowerCase(),
   );
-  return approved
+  return allowAnyRecipient || approved
     ? { kind: 'payment', intent: intent.data }
     : { kind: 'clarification', message: 'Choose an approved recipient.' };
 }

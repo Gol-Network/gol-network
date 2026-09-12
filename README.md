@@ -18,7 +18,7 @@
 </p>
 
 GOL is an account and execution system for AI agents on Arc testnet. An owner defines a mandate—
-approved recipients, payment limits, cumulative budget, and expiry—and a separate agent can act only
+an owner-selected recipient policy, payment limits, cumulative budget, and expiry—and a separate agent can act only
 inside those rules. The `GolAccount` smart contract is the final authority: an allowed payment moves
 USDC, while a policy violation is recorded as an on-chain refusal without transferring funds.
 
@@ -34,7 +34,7 @@ run automatically; every wallet write is prepared for explicit human review.
 
 ## What GOL provides
 
-- **Contract-enforced mandates** — recipient allowlists, per-payment caps, cumulative limits,
+- **Contract-enforced mandates** — explicit allow-all or recipient allowlists, per-payment caps, cumulative limits,
   expiration, revocation, replay protection, and deterministic refusal reasons.
 - **Owner-controlled custody** — account creation, deposits, withdrawals, mandates, and prepared
   protocol actions remain in the connected owner wallet.

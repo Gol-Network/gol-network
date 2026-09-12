@@ -17,6 +17,7 @@ dataSources:
       language: wasm/assemblyscript
       entities:
         - Account
+        - LifecycleEvent
       abis:
         - name: GolAccountFactory
           file: ./abis/GolAccountFactory.json
@@ -24,6 +25,27 @@ dataSources:
         - event: AccountCreated(indexed address,indexed address)
           handler: handleAccountCreated
       file: ./src/factory.ts
+  - kind: ethereum/contract
+    name: ArcUsdc
+    network: arc-testnet
+    source:
+      address: '0x3600000000000000000000000000000000000000'
+      abi: ArcUsdc
+      startBlock: 61179889
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      entities:
+        - Account
+        - LifecycleEvent
+      abis:
+        - name: ArcUsdc
+          file: ./abis/ERC20.json
+      eventHandlers:
+        - event: Transfer(indexed address,indexed address,uint256)
+          handler: handleTransfer
+      file: ./src/usdc.ts
 templates:
   - kind: ethereum/contract
     name: GolAccount
@@ -37,6 +59,7 @@ templates:
       entities:
         - Mandate
         - Action
+        - LifecycleEvent
       abis:
         - name: GolAccount
           file: ./abis/GolAccount.json
@@ -49,4 +72,6 @@ templates:
           handler: handleExecuted
         - event: Refused(indexed uint256,indexed bytes32,indexed address,address,uint8,uint256,uint256,uint256,string,uint256)
           handler: handleRefused
+        - event: Withdrawn(indexed address,uint256)
+          handler: handleWithdrawn
       file: ./src/account.ts

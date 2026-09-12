@@ -42,6 +42,7 @@ export interface KmsExecutionConfig {
 interface WorkerContextBase {
   context: VerifiedAgentContext;
   recipients: RecipientLabel[];
+  allowAnyRecipient: boolean;
   chain: PaymentChain;
   model?: JsonModel;
 }
@@ -121,7 +122,18 @@ export class PaymentWorker {
   async tick(): Promise<boolean> {
     const job = await this.journal.claimNext(this.workerId);
     if (!job) return false;
-    const dependencies = await this.resolver.resolve(job);
+    let dependencies: WorkerContext;
+    try {
+      dependencies = await this.resolver.resolve(job);
+    } catch (error) {
+      // A missing or stale signer context is terminal for this exact request. Leaving it leased
+      // would make the UI report QUEUED forever even though no worker can safely sign it.
+      await this.journal.finish(job.id, this.workerId, {
+        state: 'signer_blocked',
+        errorCode: resolverErrorCode(error),
+      });
+      return true;
+    }
     if (dependencies.mode === 'aws_kms' || dependencies.mode === 'privy_raw') {
       await this.runRaw(job, dependencies);
     } else {
@@ -170,7 +182,12 @@ export class PaymentWorker {
       return;
     }
 
-    const parsed = await parseInstruction(job.text, deps.recipients, deps.model);
+    const parsed = await parseInstruction(
+      job.text,
+      deps.recipients,
+      deps.model,
+      deps.allowAnyRecipient,
+    );
     if (parsed.kind === 'clarification') {
       await this.journal.finish(job.id, this.workerId, {
         state: 'needs_clarification',
@@ -443,7 +460,12 @@ export class PaymentWorker {
       return;
     }
 
-    const parsed = await parseInstruction(job.text, dependencies.recipients, dependencies.model);
+    const parsed = await parseInstruction(
+      job.text,
+      dependencies.recipients,
+      dependencies.model,
+      dependencies.allowAnyRecipient,
+    );
     if (parsed.kind === 'clarification') {
       await this.journal.finish(job.id, this.workerId, {
         state: 'needs_clarification',
@@ -533,6 +555,16 @@ export class PaymentWorker {
       });
     }
   }
+}
+
+function resolverErrorCode(error: unknown): string {
+  const detail = error instanceof Error ? error.message : '';
+  if (detail.includes('policy migration')) return 'AGENT_POLICY_MIGRATION_REQUIRED';
+  if (detail.includes('different signer backend') || detail.includes('requires aws_kms')) {
+    return 'SIGNER_PROVIDER_MISMATCH';
+  }
+  if (detail.includes('context not found')) return 'SIGNER_CONTEXT_NOT_FOUND';
+  return 'SIGNER_CONTEXT_UNAVAILABLE';
 }
 
 function intentHash(

@@ -58,6 +58,44 @@ async def test_greeting_is_helpful_without_a_model_key(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_current_prompt_overrides_stale_checkpoint_messages(monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    result = await importlib.import_module("gol_agent.graph").graph.ainvoke(
+        {
+            "messages": [HumanMessage(content="Pay 101 USDC to Phuong 1")],
+            "currentPrompt": "hi",
+        },
+        config={"configurable": {"thread_id": f"test-{uuid.uuid4().hex}"}},
+    )
+
+    assert str(result["messages"][-1].content).startswith("Hi!")
+    assert result["messages"][-1].tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_outcome_followup_streams_the_grounded_fallback_without_a_model_key(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    result = await importlib.import_module("gol_agent.graph").graph.ainvoke(
+        {
+            "messages": [HumanMessage(content="Pay 101 USDC")],
+            "outcomeFollowup": {
+                "kind": "payment",
+                "status": "refused",
+                "summary": "101 USDC is above the 100 USDC per-payment limit.",
+                "facts": {"limitLeftUsdc": "95"},
+                "fallback": "No funds moved. Lower the amount and try again.",
+            },
+        },
+        config={"configurable": {"thread_id": f"test-{uuid.uuid4().hex}"}},
+    )
+
+    assert str(result["messages"][-1].content) == "No funds moved. Lower the amount and try again."
+    assert result["outcomeFollowup"] is None
+
+
+@pytest.mark.asyncio
 async def test_deterministic_text_is_observably_streamed() -> None:
     model = importlib.import_module("gol_agent.streaming_model").streaming_text_model
     arrivals = []

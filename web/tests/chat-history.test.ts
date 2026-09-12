@@ -48,6 +48,18 @@ describe('agent chat history', () => {
     ).toBe('failed');
   });
 
+  it('restores completed agent outcome explanations after reload', () => {
+    const serialized = serializeChatHistory([], 'thread-1', {
+      payment: 'The payment was refused because it exceeded the per-payment limit.',
+      'payment:id': 'request-1:refused',
+    });
+
+    expect(parseChatHistory(serialized).followups).toEqual({
+      payment: 'The payment was refused because it exceeded the per-payment limit.',
+      'payment:id': 'request-1:refused',
+    });
+  });
+
   it('rejects malformed or unbounded browser data', () => {
     expect(parseChatHistory('{')).toEqual({ messages: [], threadId: null });
     expect(parseChatHistory('x'.repeat(250_001))).toEqual({ messages: [], threadId: null });

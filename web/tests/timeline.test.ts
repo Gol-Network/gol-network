@@ -1,4 +1,4 @@
-import type { ActivityRecord } from '@gol/protocol';
+import type { ActivityRecord, LifecycleEventRecord } from '@gol/protocol';
 import { describe, expect, it } from 'vitest';
 import {
   filterTimeline,
@@ -47,6 +47,20 @@ const overlay: PendingActivity = {
   confirmedAt: 1,
 };
 
+const accountCreated: LifecycleEventRecord = {
+  eventId: `0x${'03'.repeat(36)}`,
+  account: '0x0000000000000000000000000000000000acc017',
+  kind: 'ACCOUNT_CREATED',
+  amountUnits: null,
+  mandateId: null,
+  agent: null,
+  transactionHash: `0x${'03'.repeat(32)}`,
+  blockNumber: '99',
+  blockHash: `0x${'dc'.repeat(32)}`,
+  timestamp: '1799999999',
+  logIndex: '0',
+};
+
 describe('on-chain to indexed transition', () => {
   it('shows a confirmed overlay while the record is not indexed', () => {
     const entries = mergeTimeline([], [overlay]);
@@ -88,6 +102,17 @@ describe('on-chain to indexed transition', () => {
 
   it('never lists the same indexed action twice', () => {
     expect(mergeTimeline([indexedRefusal, indexedRefusal], [])).toHaveLength(1);
+  });
+
+  it('shows account lifecycle events in All without mixing them into payment filters', () => {
+    const entries = mergeTimeline([indexedRefusal], [], [accountCreated]);
+
+    expect(entries).toHaveLength(2);
+    expect(entries[0]!.kind).toBe('indexed');
+    expect(entries[1]!.kind).toBe('lifecycle');
+    expect(filterTimeline(entries, 'ALL')).toHaveLength(2);
+    expect(filterTimeline(entries, 'REFUSED')).toHaveLength(1);
+    expect(filterTimeline(entries, 'EXECUTED')).toHaveLength(0);
   });
 
   it('round trips a confirmed overlay for recovery after refresh', () => {

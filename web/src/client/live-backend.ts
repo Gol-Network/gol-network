@@ -75,6 +75,7 @@ export function createLiveBackend(dependencies: LiveBackendDependencies): GolBac
       linked: false,
       policyId: null,
       policyDisclosure: null,
+      recipientMode: 'allowlist',
       recipients: [],
       balances: {
         ownerUsdcUnits: ownerUsdc.toString(),
@@ -102,6 +103,7 @@ export function createLiveBackend(dependencies: LiveBackendDependencies): GolBac
         linked: agentControl.status === 'configured',
         policyId: String((value.agentControl as Record<string, unknown>)?.policyId ?? ''),
         policyDisclosure: (agentControl.disclosure as AccountSnapshot['policyDisclosure']) ?? null,
+        recipientMode: value.recipientMode === 'all' ? 'all' : 'allowlist',
         recipients: (value.recipients as AccountSnapshot['recipients']) ?? [],
         balances: {
           ownerUsdcUnits: balances?.ownerUsdcUnits ?? '0',
@@ -125,14 +127,14 @@ export function createLiveBackend(dependencies: LiveBackendDependencies): GolBac
       await createAccount(await ownerProvider(), config, config.factoryAddress, report);
     },
 
-    async provisionAgent(account: Address, owner: Address, recipient: Address, label: string) {
+    async provisionAgent(account, owner, recipientMode, recipients) {
       await authedFetch('/api/agent/setup', {
         method: 'POST',
         body: JSON.stringify({
           account,
           ownerAddress: owner,
-          recipient,
-          recipientLabel: label,
+          recipientMode,
+          recipients,
           consent: true,
         }),
       });
@@ -156,7 +158,9 @@ export function createLiveBackend(dependencies: LiveBackendDependencies): GolBac
           perPaymentCap: BigInt(draft.perPaymentCapUnits),
           cumulativeCap: BigInt(draft.cumulativeCapUnits),
           expiresAt: BigInt(draft.expiresAt),
-          recipients: [draft.recipient],
+          recipients: draft.allowAnyRecipient
+            ? []
+            : draft.recipients.map((recipient) => recipient.address),
         },
         report,
       );

@@ -39,3 +39,17 @@ type Action @entity(immutable: true) {
   timestamp: BigInt!
   logIndex: BigInt!
 }
+
+type LifecycleEvent @entity(immutable: true) {
+  id: Bytes!
+  account: Account!
+  kind: String!
+  amount: BigInt
+  mandateId: BigInt
+  agent: Bytes
+  transactionHash: Bytes!
+  blockNumber: BigInt!
+  blockHash: Bytes!
+  timestamp: BigInt!
+  logIndex: BigInt!
+}

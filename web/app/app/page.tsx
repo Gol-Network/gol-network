@@ -24,12 +24,18 @@ export const metadata: Metadata = {
   },
 };
 
-export default function AppPage() {
+export default async function AppPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ preview?: string | string[] | undefined }>;
+}) {
   const result = publicConfigResult();
   if (!result.ok) return <ConfigurationNotice fields={result.fields} />;
+  const preview = (await searchParams).preview;
+  const forceLoading = process.env.NODE_ENV === 'development' && preview === 'loading';
   return (
     <Providers config={result.config}>
-      <GolApp config={result.config} />
+      <GolApp config={result.config} forceLoading={forceLoading} />
     </Providers>
   );
 }

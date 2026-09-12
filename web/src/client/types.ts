@@ -10,6 +10,13 @@ export interface RecipientEntry {
   allowedByActiveMandate: boolean;
 }
 
+export type RecipientMode = 'all' | 'allowlist';
+
+export interface RecipientDraft {
+  label: string;
+  address: string;
+}
+
 export interface AccountBalances {
   /** ERC-20 USDC held directly by the owner wallet. */
   ownerUsdcUnits: string;
@@ -28,6 +35,8 @@ export interface MandateView {
   spentUnits: string;
   expiresAt: string;
   revoked: boolean;
+  /** True when the owner signed an empty on-chain allowlist, explicitly permitting any address. */
+  allowAnyRecipient: boolean;
 }
 
 export interface PolicyDisclosure {
@@ -53,6 +62,7 @@ export interface AccountSnapshot {
   linked: boolean;
   policyId: string | null;
   policyDisclosure: PolicyDisclosure | null;
+  recipientMode: RecipientMode;
   recipients: RecipientEntry[];
   balances: AccountBalances;
   activeMandateId: string;
@@ -127,8 +137,8 @@ export interface RequestSnapshot {
 
 export interface MandateDraft {
   agent: Address;
-  recipient: Address;
-  recipientLabel: string;
+  recipients: Array<{ address: Address; label: string }>;
+  allowAnyRecipient: boolean;
   perPaymentCapUnits: string;
   cumulativeCapUnits: string;
   expiresAt: string;
@@ -217,8 +227,8 @@ export interface GolBackend {
   provisionAgent(
     account: Address,
     owner: Address,
-    recipient: Address,
-    label: string,
+    recipientMode: RecipientMode,
+    recipients: Array<{ address: Address; label: string }>,
   ): Promise<void>;
   fundAgentGas(agent: Address, units: bigint, report: TransactionReporter): Promise<void>;
   fundAccount(account: Address, units: bigint, report: TransactionReporter): Promise<void>;

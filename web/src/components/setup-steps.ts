@@ -30,30 +30,41 @@ export function deriveSteps(input: {
   config: PublicConfig;
   authenticated: boolean;
   account: AccountSnapshot | null;
+  paymentBudgetPending?: boolean;
 }): SetupStep[] {
-  const { config, authenticated, account } = input;
+  const { config, authenticated, account, paymentBudgetPending = false } = input;
   const balances = account?.balances;
   const ownerGasReady =
     Boolean(balances) && BigInt(balances!.ownerGasWei) >= BigInt(config.minOwnerGasWei);
   const accountReady = Boolean(account?.accountAddress);
   // An address alone is not enough: an older signer can still be stored while its policy requires
   // migration. The API marks only the current, verified policy revision as linked.
-  const recipient = account?.recipients[0] ?? null;
-  const recipientReady = Boolean(account?.recipients.length === 1 && recipient?.confirmed);
+  const confirmedRecipients = account?.recipients.filter((recipient) => recipient.confirmed) ?? [];
+  const recipientReady = Boolean(
+    account?.recipientMode === 'all' || confirmedRecipients.length > 0,
+  );
+  const agentReconnectRequired = Boolean(
+    accountReady && account?.agentAddress && account.linked === false,
+  );
   const agentReady = Boolean(account?.linked && account.agentAddress && recipientReady);
   const agentGasReady =
     Boolean(balances) && BigInt(balances!.agentGasWei) >= BigInt(config.minAgentGasWei);
   // A positive payment balance is enough to finish setup. The mandate limit is an authority cap,
   // not a requirement to lock the full amount in advance.
   const accountFunded =
+    !paymentBudgetPending &&
     Boolean(balances) &&
     BigInt(balances!.accountUsdcUnits) + BigInt(account?.mandate?.spentUnits ?? '0') > 0n;
   const mandateReady =
+    !paymentBudgetPending &&
     Boolean(account?.agentAddress) &&
     account!.activeMandateId !== '0' &&
     account!.mandate?.revoked === false &&
     account!.mandate.agent.toLowerCase() === account!.agentAddress!.toLowerCase() &&
-    recipient?.allowedByActiveMandate === true;
+    (account!.recipientMode === 'all'
+      ? account!.mandate.allowAnyRecipient
+      : !account!.mandate.allowAnyRecipient &&
+        confirmedRecipients.every((recipient) => recipient.allowedByActiveMandate));
 
   const definitions: Array<{
     id: StepId;
@@ -98,23 +109,27 @@ export function deriveSteps(input: {
     config.agentSignerProvider === 'aws_kms'
       ? {
           id: 'agent_wallet',
-          title: 'Choose who GOL can pay',
+          title: agentReconnectRequired ? 'Reconnect payment agent' : 'Choose who GOL can pay',
           detail: agentReady
-            ? 'GOL is connected to the recipient you approved.'
-            : 'Enter and approve one exact recipient for agent payments.',
+            ? 'GOL is connected to the recipient policy you approved.'
+            : agentReconnectRequired
+              ? 'Your payment account, funds, and saved recipients are unchanged. Reconnect the retired signer.'
+              : 'Allow all exact addresses or add approved recipient addresses.',
           complete: agentReady,
           action: 'provision_agent',
-          actionLabel: 'Choose recipient',
+          actionLabel: agentReconnectRequired ? 'Reconnect agent' : 'Choose recipients',
         }
       : {
           id: 'agent_wallet',
-          title: 'Choose who GOL can pay',
+          title: agentReconnectRequired ? 'Reconnect payment agent' : 'Choose who GOL can pay',
           detail: agentReady
             ? 'The payment agent is ready.'
-            : 'Enter and approve one exact recipient for agent payments.',
+            : agentReconnectRequired
+              ? 'Your payment account, funds, and saved recipients are unchanged. Reconnect the retired signer.'
+              : 'Allow all exact addresses or add approved recipient addresses.',
           complete: agentReady,
           action: 'provision_agent',
-          actionLabel: 'Choose recipient',
+          actionLabel: agentReconnectRequired ? 'Reconnect agent' : 'Choose recipients',
         },
     config.agentGasManaged
       ? {
@@ -143,7 +158,9 @@ export function deriveSteps(input: {
       title: 'Set your payment budget',
       detail: accountFunded
         ? 'GOL has USDC available for approved payments.'
-        : 'Choose the funds and 7-day limits once. Your wallet will ask for two approvals.',
+        : paymentBudgetPending
+          ? 'Complete both wallet approvals before GOL marks the agent ready.'
+          : 'Choose the funds and 7-day limits once. Your wallet will ask for two approvals.',
       complete: accountFunded,
       action: 'fund_account',
       actionLabel: 'Set payment budget',

@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS account_links (
   signer_key_arn text,
   signer_region varchar(32),
   signer_address char(42),
+  recipient_mode varchar(16) NOT NULL DEFAULT 'allowlist',
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -86,6 +87,26 @@ ALTER TABLE account_links
 ALTER TABLE account_links ADD COLUMN IF NOT EXISTS signer_key_arn text;
 ALTER TABLE account_links ADD COLUMN IF NOT EXISTS signer_region varchar(32);
 ALTER TABLE account_links ADD COLUMN IF NOT EXISTS signer_address char(42);
+ALTER TABLE account_links
+  ADD COLUMN IF NOT EXISTS recipient_mode varchar(16) NOT NULL DEFAULT 'allowlist';
+
+ALTER TABLE account_links DROP CONSTRAINT IF EXISTS account_links_recipient_mode_check;
+ALTER TABLE account_links
+  ADD CONSTRAINT account_links_recipient_mode_check
+  CHECK (recipient_mode IN ('all', 'allowlist'));
+
+-- A factory upgrade creates a new immutable account for the same owner. Historical recipients and
+-- requests keep their original account address while account_links advances to the new account.
+ALTER TABLE recipients DROP CONSTRAINT IF EXISTS recipients_account_address_fkey;
+ALTER TABLE requests DROP CONSTRAINT IF EXISTS requests_account_address_fkey;
+
+-- Privy can issue a new user subject after the owner changes login method. The wallet remains the
+-- source of authority, so rebinding a verified owner must preserve and move its journal rows.
+ALTER TABLE requests DROP CONSTRAINT IF EXISTS requests_user_subject_fkey;
+ALTER TABLE requests
+  ADD CONSTRAINT requests_user_subject_fkey
+  FOREIGN KEY (user_subject) REFERENCES account_links(user_subject)
+  ON UPDATE CASCADE ON DELETE CASCADE;
 
 ALTER TABLE account_links DROP CONSTRAINT IF EXISTS account_links_signer_provider_check;
 ALTER TABLE account_links

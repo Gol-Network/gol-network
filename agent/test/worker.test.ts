@@ -265,6 +265,7 @@ function privyContext(signer: FakeSigner, chain: PaymentChain = new FakeChain())
     mode: 'privy',
     context: verified,
     recipients: [{ label: 'Design contractor', address: RECIPIENT }],
+    allowAnyRecipient: false,
     signer,
     chain,
   };
@@ -282,6 +283,7 @@ function kmsContext(signer: AgentSigner, chain: PaymentChain = new FakeChain()):
     mode: 'aws_kms',
     context: verified,
     recipients: [{ label: 'Design contractor', address: RECIPIENT }],
+    allowAnyRecipient: false,
     signer,
     chain,
     kms: KMS_CONFIG,
@@ -289,6 +291,21 @@ function kmsContext(signer: AgentSigner, chain: PaymentChain = new FakeChain()):
 }
 
 describe('payment worker recovery (privy)', () => {
+  it('finishes a request when its signer context cannot be resolved', async () => {
+    const journal = new FakeJournal(job());
+    const worker = new PaymentWorker('worker-1', journal, {
+      resolve: async () => {
+        throw new Error('Privy agent policy migration is required before the worker can sign');
+      },
+    });
+
+    await expect(worker.tick()).resolves.toBe(true);
+    expect(journal.finishes.at(-1)).toMatchObject({
+      state: 'signer_blocked',
+      errorCode: 'AGENT_POLICY_MIGRATION_REQUIRED',
+    });
+  });
+
   it('processes one queued instruction through a confirmed result', async () => {
     const journal = new FakeJournal(job());
     const signer = new FakeSigner();

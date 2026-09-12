@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
-import { DM_Sans, JetBrains_Mono } from 'next/font/google';
+import { DM_Sans, JetBrains_Mono, Silkscreen } from 'next/font/google';
 import { publicOrigin } from '@/content/site';
 import './globals.css';
 
@@ -16,8 +16,19 @@ const jetBrainsMono = JetBrains_Mono({
   display: 'swap',
 });
 
+const silkscreen = Silkscreen({
+  subsets: ['latin'],
+  weight: ['400', '700'],
+  variable: '--font-silkscreen',
+  display: 'swap',
+});
+
 export const metadata: Metadata = {
   metadataBase: new URL(publicOrigin),
+  icons: {
+    icon: [{ url: '/gol-mark-blue.svg', type: 'image/svg+xml' }],
+    shortcut: '/gol-mark-blue.svg',
+  },
   title: {
     default: 'Gol | On-chain limits for AI agents',
     template: '%s | Gol',
@@ -32,7 +43,10 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
-    <html lang="en" className={`${dmSans.variable} ${jetBrainsMono.variable}`}>
+    <html
+      lang="en"
+      className={`${dmSans.variable} ${jetBrainsMono.variable} ${silkscreen.variable}`}
+    >
       <body>{children}</body>
     </html>
   );

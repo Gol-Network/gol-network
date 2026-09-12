@@ -8,18 +8,22 @@ import {
 } from 'matchstick-as/assembly/index';
 import { Address, BigInt, Bytes, ethereum } from '@graphprotocol/graph-ts';
 import { AccountCreated } from '../generated/GolAccountFactory/GolAccountFactory';
+import { Transfer } from '../generated/ArcUsdc/ArcUsdc';
 import {
   Executed,
   MandateCreated,
   MandateRevoked,
   Refused,
+  Withdrawn,
 } from '../generated/templates/GolAccount/GolAccount';
 import { handleAccountCreated } from '../src/factory';
+import { handleTransfer } from '../src/usdc';
 import {
   handleExecuted,
   handleMandateCreated,
   handleMandateRevoked,
   handleRefused,
+  handleWithdrawn,
 } from '../src/account';
 
 const OWNER = Address.fromString('0x00000000000000000000000000000000000a11ce');
@@ -45,6 +49,9 @@ function baseEvent<T extends ethereum.Event>(event: T, address: Address): T {
 
 function accountCreated(): AccountCreated {
   const event = baseEvent(changetype<AccountCreated>(newMockEvent()), ACCOUNT);
+  event.transaction.hash = Bytes.fromHexString(
+    '0x4000000000000000000000000000000000000000000000000000000000000000',
+  );
   event.parameters = [
     new ethereum.EventParam('owner', ethereum.Value.fromAddress(OWNER)),
     new ethereum.EventParam('account', ethereum.Value.fromAddress(ACCOUNT)),
@@ -54,6 +61,10 @@ function accountCreated(): AccountCreated {
 
 function mandateCreated(): MandateCreated {
   const event = baseEvent(changetype<MandateCreated>(newMockEvent()), ACCOUNT);
+  event.transaction.hash = Bytes.fromHexString(
+    '0x5000000000000000000000000000000000000000000000000000000000000000',
+  );
+  event.logIndex = BigInt.fromI32(1);
   event.parameters = [
     new ethereum.EventParam('mandateId', ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(1))),
     new ethereum.EventParam('agent', ethereum.Value.fromAddress(AGENT)),
@@ -70,6 +81,39 @@ function mandateCreated(): MandateCreated {
       ethereum.Value.fromUnsignedBigInt(BigInt.fromI64(1_800_604_800)),
     ),
     new ethereum.EventParam('recipients', ethereum.Value.fromAddressArray([RECIPIENT])),
+  ];
+  return event;
+}
+
+function fundsAdded(): Transfer {
+  const event = baseEvent(
+    changetype<Transfer>(newMockEvent()),
+    Address.fromString('0x3600000000000000000000000000000000000000'),
+  );
+  event.transaction.hash = Bytes.fromHexString(
+    '0x6000000000000000000000000000000000000000000000000000000000000000',
+  );
+  event.logIndex = BigInt.fromI32(2);
+  event.parameters = [
+    new ethereum.EventParam('from', ethereum.Value.fromAddress(OWNER)),
+    new ethereum.EventParam('to', ethereum.Value.fromAddress(ACCOUNT)),
+    new ethereum.EventParam(
+      'value',
+      ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(100_000_000)),
+    ),
+  ];
+  return event;
+}
+
+function withdrawn(): Withdrawn {
+  const event = baseEvent(changetype<Withdrawn>(newMockEvent()), ACCOUNT);
+  event.transaction.hash = Bytes.fromHexString(
+    '0x7000000000000000000000000000000000000000000000000000000000000000',
+  );
+  event.logIndex = BigInt.fromI32(3);
+  event.parameters = [
+    new ethereum.EventParam('owner', ethereum.Value.fromAddress(OWNER)),
+    new ethereum.EventParam('amount', ethereum.Value.fromUnsignedBigInt(BigInt.fromI32(5_000_000))),
   ];
   return event;
 }
@@ -142,7 +186,9 @@ describe('Gol account mappings', () => {
   beforeAll(() => {
     clearStore();
     handleAccountCreated(accountCreated());
+    handleTransfer(fundsAdded());
     handleMandateCreated(mandateCreated());
+    handleWithdrawn(withdrawn());
     handleExecuted(executed());
     handleRefused(refused());
   });
@@ -161,6 +207,23 @@ describe('Gol account mappings', () => {
     assert.fieldEquals('Action', action, 'spentAfter', '40000000');
     assert.fieldEquals('Action', action, 'transactionHash', REFUSED_TX.toHexString());
     assert.entityCount('Action', 2);
+    assert.entityCount('LifecycleEvent', 4);
+    assert.fieldEquals(
+      'LifecycleEvent',
+      Bytes.fromHexString('0x6000000000000000000000000000000000000000000000000000000000000000')
+        .concatI32(2)
+        .toHexString(),
+      'kind',
+      'FUNDS_ADDED',
+    );
+    assert.fieldEquals(
+      'LifecycleEvent',
+      Bytes.fromHexString('0x7000000000000000000000000000000000000000000000000000000000000000')
+        .concatI32(3)
+        .toHexString(),
+      'amount',
+      '5000000',
+    );
   });
 
   test('uses deterministic IDs and ignores duplicate event ingestion', () => {

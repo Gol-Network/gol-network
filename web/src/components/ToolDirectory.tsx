@@ -132,9 +132,7 @@ export function ToolDirectory() {
           <div>
             <div className="mb-3 flex items-center gap-2">
               <GolLogo className="size-8" />
-              <span className="font-mono text-xs font-semibold uppercase tracking-[.2em] text-primary">
-                GOL Agent
-              </span>
+              <span className="font-pixel-wordmark text-sm text-primary">GOL Agent</span>
             </div>
             <h1 className="text-3xl font-semibold tracking-tight">Connected tools</h1>
             <p className="mt-2 max-w-2xl text-sm leading-copy text-muted-foreground">

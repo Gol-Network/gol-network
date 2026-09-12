@@ -63,11 +63,13 @@ export function createFixtureBackend(config: PublicConfig): GolBackend {
   let nonce = 1;
   let accountCreated = false;
   let agentProvisioned = false;
-  let approvedRecipient: { address: Address; label: string } | null = null;
+  let recipientMode: AccountSnapshot['recipientMode'] = 'allowlist';
+  let approvedRecipients: Array<{ address: Address; label: string }> = [];
   let agentGasWei = 0n;
   let accountUsdc = 0n;
   let activeMandateId = '0';
-  let mandateRecipient: Address | null = null;
+  let mandateRecipients: Address[] = [];
+  let mandateAllowsAnyRecipient = false;
   let spent = 0n;
   let mandate: AccountSnapshot['mandate'] = null;
   let sequence = 0;
@@ -108,17 +110,18 @@ export function createFixtureBackend(config: PublicConfig): GolBackend {
             revocation: 'Revoke the mandate from the owner wallet.',
           }
         : null,
-      recipients:
-        agentProvisioned && approvedRecipient
-          ? [
-              {
-                ...approvedRecipient,
-                confirmed: true,
-                allowedByActiveMandate:
-                  mandateRecipient?.toLowerCase() === approvedRecipient.address.toLowerCase(),
-              },
-            ]
-          : [],
+      recipientMode,
+      recipients: agentProvisioned
+        ? approvedRecipients.map((recipient) => ({
+            ...recipient,
+            confirmed: true,
+            allowedByActiveMandate:
+              mandateAllowsAnyRecipient ||
+              mandateRecipients.some(
+                (address) => address.toLowerCase() === recipient.address.toLowerCase(),
+              ),
+          }))
+        : [],
       balances: {
         ownerUsdcUnits: (250n * 10n ** 6n).toString(),
         accountUsdcUnits: accountUsdc.toString(),
@@ -140,7 +143,7 @@ export function createFixtureBackend(config: PublicConfig): GolBackend {
       requestId: request.requestId as `0x${string}`,
       mandateId: request.mandateId,
       agent: AGENT,
-      recipient: request.recipient ?? approvedRecipient?.address ?? ACCOUNT,
+      recipient: request.recipient ?? approvedRecipients[0]?.address ?? ACCOUNT,
       outcome: executed ? 'EXECUTED' : 'REFUSED',
       rule: executed ? 'NONE' : 'CUMULATIVE_CAP',
       reason: executed ? 'Payment executed' : 'Cumulative cap exceeded',
@@ -172,9 +175,10 @@ export function createFixtureBackend(config: PublicConfig): GolBackend {
       });
     },
 
-    async provisionAgent(_account, _owner, recipient, label) {
+    async provisionAgent(_account, _owner, mode, recipients) {
       await pause(TIMINGS.provisioning);
-      approvedRecipient = { address: recipient, label };
+      recipientMode = mode;
+      if (mode === 'allowlist') approvedRecipients = recipients;
       agentProvisioned = true;
     },
 
@@ -194,7 +198,8 @@ export function createFixtureBackend(config: PublicConfig): GolBackend {
     async signMandate(_account, draft: MandateDraft, report) {
       await ownerTransaction(report, () => {
         activeMandateId = '1';
-        mandateRecipient = draft.recipient;
+        mandateRecipients = draft.recipients.map((recipient) => recipient.address);
+        mandateAllowsAnyRecipient = draft.allowAnyRecipient;
         spent = 0n;
         mandate = {
           agent: draft.agent,
@@ -203,6 +208,7 @@ export function createFixtureBackend(config: PublicConfig): GolBackend {
           spentUnits: '0',
           expiresAt: draft.expiresAt,
           revoked: false,
+          allowAnyRecipient: draft.allowAnyRecipient,
         };
       });
     },
@@ -211,7 +217,8 @@ export function createFixtureBackend(config: PublicConfig): GolBackend {
       await ownerTransaction(report, () => {
         if (mandate) mandate = { ...mandate, revoked: true };
         activeMandateId = '0';
-        mandateRecipient = null;
+        mandateRecipients = [];
+        mandateAllowsAnyRecipient = false;
       });
     },
 
@@ -335,7 +342,12 @@ export function createFixtureBackend(config: PublicConfig): GolBackend {
     },
 
     async submitInstruction(_account, requestId, text, mandateId) {
-      const parsed = await parseInstruction(text, approvedRecipient ? [approvedRecipient] : []);
+      const parsed = await parseInstruction(
+        text,
+        approvedRecipients,
+        undefined,
+        recipientMode === 'all',
+      );
       if (parsed.kind === 'clarification') {
         requests.set(requestId, {
           requestId,

@@ -75,6 +75,32 @@ describe('server routes', () => {
     });
   });
 
+  it('accepts instructions without a saved recipient in explicit allow-all mode', async () => {
+    query.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [
+        {
+          account_address: '0x1111111111111111111111111111111111111111',
+          recipient_mode: 'all',
+          recipient_confirmed: false,
+        },
+      ],
+    });
+    const { POST } = await import('../app/api/instructions/route');
+    const response = await POST(
+      new Request('https://gol.test/api/instructions', {
+        method: 'POST',
+        body: JSON.stringify({
+          account: '0x1111111111111111111111111111111111111111',
+          mandateId: '1',
+          requestId: `0x${'4'.repeat(64)}`,
+          text: 'Pay 1 USDC to 0x2222222222222222222222222222222222222222',
+        }),
+      }),
+    );
+    expect(response.status).toBe(202);
+  });
+
   it('does not expose another user request', async () => {
     const { GET } = await import('../app/api/requests/[requestId]/route');
     const response = await GET(new Request('https://gol.test/api/requests/id'), {

@@ -28,6 +28,7 @@ export async function POST(request: Request) {
     const body = schema.parse(await readJson(request));
     const link = await pool.query(
       `SELECT a.account_address,
+              a.recipient_mode,
               EXISTS (
                 SELECT 1 FROM recipients r
                 WHERE r.account_address = a.account_address AND r.confirmed_at IS NOT NULL
@@ -42,7 +43,10 @@ export async function POST(request: Request) {
     if (body.account && body.account.toLowerCase() !== account.toLowerCase()) {
       return NextResponse.json({ error: 'ACCOUNT_SCOPE_MISMATCH' }, { status: 403 });
     }
-    if (link.rows[0].recipient_confirmed !== true) {
+    if (
+      String(link.rows[0].recipient_mode ?? 'allowlist') !== 'all' &&
+      link.rows[0].recipient_confirmed !== true
+    ) {
       return NextResponse.json({ error: 'RECIPIENT_CONFIRMATION_REQUIRED' }, { status: 409 });
     }
     const journal = new PgJournal(pool);

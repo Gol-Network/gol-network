@@ -248,7 +248,7 @@ function TokenizedStocksExperience({ world, onReset }: { world: MockWorld; onRes
       <header className="topbar">
         <a className="brand" href="#top">
           <span className="brand-mark">G</span>
-          <span>GOL</span>
+          <span className="font-pixel-wordmark text-xs sm:text-sm">GOL Network</span>
         </a>
         <div className="top-actions">
           <span className="network">

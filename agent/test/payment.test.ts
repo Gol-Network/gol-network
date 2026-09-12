@@ -165,6 +165,29 @@ describe('payment parser', () => {
   ])('does not invent a payment for %s', async (instruction) => {
     expect((await parseInstruction(instruction, recipients)).kind).toBe('clarification');
   });
+
+  it('accepts an exact address when the owner explicitly allows all recipients', async () => {
+    await expect(
+      parseInstruction(
+        'Pay 40 USDC to 0x000000000000000000000000000000000000c0de',
+        [],
+        undefined,
+        true,
+      ),
+    ).resolves.toEqual({
+      kind: 'payment',
+      intent: {
+        recipient: '0x000000000000000000000000000000000000c0DE',
+        amountUsdc: '40',
+      },
+    });
+  });
+
+  it('still refuses to guess a label when all recipients are allowed', async () => {
+    expect((await parseInstruction('Pay 40 USDC to Alice', [], undefined, true)).kind).toBe(
+      'clarification',
+    );
+  });
 });
 
 describe('payment submission', () => {

@@ -1,20 +1,38 @@
 'use client';
 
-import { formatUsdc, parseUsdc, type ActivityPage, type GroundedAnswer } from '@gol/protocol';
+import {
+  formatUsdc,
+  parseUsdc,
+  type ActivityPage,
+  type GroundedAnswer,
+  type LifecycleEventRecord,
+} from '@gol/protocol';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
   ArrowUpRight,
+  BadgeCheck,
+  Blocks,
+  CalendarClock,
+  CheckCircle2,
   CircleAlert,
   CirclePlus,
   Copy,
+  FileCheck2,
+  Gauge,
+  GitBranch,
+  HandCoins,
   KeyRound,
   LoaderCircle,
   Mail,
   Moon,
   ShieldCheck,
+  ShieldAlert,
   Sun,
+  Trash2,
+  UserRoundCheck,
   Wallet,
   WalletCards,
+  type LucideIcon,
 } from 'lucide-react';
 import { SiGoogle } from 'react-icons/si';
 import { explorerAddressUrl, explorerTxUrl, type PublicConfig } from '@/config';
@@ -42,6 +60,8 @@ import type {
   MoneySwapQuote,
   MoneyTokenOption,
   OwnerActionKind,
+  RecipientDraft,
+  RecipientMode,
   TransactionReporter,
   TransactionState,
 } from '@/client/types';
@@ -61,9 +81,18 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/compone
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import { Toaster } from '@/components/ui/sonner';
+import { toast } from 'sonner';
 
 export interface TransferReview {
   kind: 'fund_agent_gas' | 'fund_account' | 'withdraw';
@@ -83,10 +112,10 @@ export interface DashboardProps {
   steps: SetupStep[];
   tx: TransactionState;
   busy: OwnerActionKind | null;
-  recipientLabelInput: string;
-  setRecipientLabelInput: (value: string) => void;
-  recipientInput: string;
-  setRecipientInput: (value: string) => void;
+  recipientDrafts: RecipientDraft[];
+  setRecipientDrafts: (value: RecipientDraft[]) => void;
+  recipientMode: RecipientMode;
+  setRecipientMode: (value: RecipientMode) => void;
   consentOpen: boolean;
   setConsentOpen: (value: boolean) => void;
   mandateReview: MandateDraft | null;
@@ -125,9 +154,11 @@ export interface DashboardProps {
   onPreview: (instruction?: string) => void;
   onSubmitInstruction: () => void;
   onCancelPreview: () => void;
+  onClearConversation: () => void;
   payment: PaymentView;
   page: ActivityPage | null;
   lastGoodPage: ActivityPage | null;
+  activityLoading: boolean;
   pending: PendingActivity[];
   indexingWindowClosed: boolean;
   checkingIndexing: boolean;
@@ -152,18 +183,16 @@ export function Dashboard(props: DashboardProps) {
   const [exportTarget, setExportTarget] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [balanceAction, setBalanceAction] = useState<'deposit' | 'withdraw' | null>(null);
+  const [sendPaymentOpen, setSendPaymentOpen] = useState(false);
+  const [paymentFlowOwner, setPaymentFlowOwner] = useState<'chat' | 'dialog'>('chat');
   const [aaveReview, setAaveReview] = useState<PreparedAaveReview | null>(null);
   const [desktopWorkspace, setDesktopWorkspace] = useState(false);
 
   const mandate = account?.mandate ?? null;
-  const capUnits = BigInt(mandate?.cumulativeCapUnits ?? config.accountTargetUnits);
-  const spentUnits = BigInt(mandate?.spentUnits ?? '0');
-  const boundedSpentUnits = spentUnits > capUnits ? capUnits : spentUnits;
-  const remainingUnits = capUnits - boundedSpentUnits;
   const source =
     props.page && props.page.freshness !== 'unavailable' ? props.page : props.lastGoodPage;
   const entries = useMemo(
-    () => mergeTimeline(source?.records ?? [], props.pending),
+    () => mergeTimeline(source?.records ?? [], props.pending, source?.lifecycleEvents ?? []),
     [source, props.pending],
   );
   const visible = useMemo(() => filterTimeline(entries, filter), [entries, filter]);
@@ -218,6 +247,7 @@ export function Dashboard(props: DashboardProps) {
   if (!props.auth.ready) {
     return (
       <AccountLoadingGate
+        config={config}
         theme={theme}
         onThemeChange={selectTheme}
         ownerAddress={props.auth.ownerAddress ?? null}
@@ -234,6 +264,7 @@ export function Dashboard(props: DashboardProps) {
   if (props.accountLoading) {
     return (
       <AccountLoadingGate
+        config={config}
         theme={theme}
         onThemeChange={selectTheme}
         ownerAddress={props.auth.ownerAddress ?? null}
@@ -245,12 +276,12 @@ export function Dashboard(props: DashboardProps) {
   if (nextSetupStep) {
     return (
       <>
+        <TransactionToast tx={props.tx} config={config} theme={theme} />
         <SetupGate
           {...props}
           theme={theme}
           onThemeChange={selectTheme}
           nextStep={nextSetupStep}
-          onOpenActions={() => setDrawerOpen(true)}
           onExport={(address) => {
             setExportError(null);
             setExportTarget(address);
@@ -272,17 +303,6 @@ export function Dashboard(props: DashboardProps) {
             }
           }}
         />
-        <ActionDrawer
-          open={drawerOpen}
-          recipientLabel={account?.recipients[0]?.label ?? 'Approved recipient'}
-          recipientAddress={account?.recipients[0]?.address}
-          onClose={() => setDrawerOpen(false)}
-          onListTokens={props.onListMoneyTokens}
-          onQuote={props.onQuoteMoneySwap}
-          onSwap={props.onExecuteMoneySwap}
-          onSend={props.onExecuteMoneySend}
-          onReceive={props.onGetMoneyReceiveInfo}
-        />
       </>
     );
   }
@@ -292,13 +312,12 @@ export function Dashboard(props: DashboardProps) {
       className={`theme-${theme} min-h-screen max-w-none bg-background text-foreground transition-colors xl:h-screen xl:overflow-hidden`}
       id="top"
     >
+      <TransactionToast tx={props.tx} config={config} theme={theme} />
       <header className="flex h-[68px] items-center justify-between border-b border-border px-4 sm:h-[76px] sm:px-7">
         <div className="flex items-center gap-3">
-          <a className="flex items-center gap-2.5 text-sm font-bold tracking-[.16em]" href="#top">
+          <a className="flex items-center gap-2" href="#top">
             <img className="size-8 sm:size-9" src="/gol-mark-blue.svg" alt="" />
-            <span className="font-mono text-sm tracking-[.18em] sm:text-base sm:tracking-[.22em]">
-              GOL
-            </span>
+            <span className="font-pixel-wordmark text-[10px] sm:text-sm">GOL Network</span>
           </a>
           {config.mode === 'fixture' && (
             <Badge variant="warning" className="font-mono text-[9px] tracking-wider">
@@ -339,17 +358,15 @@ export function Dashboard(props: DashboardProps) {
                 <AccountProfileHeader
                   config={config}
                   account={account}
-                  mandateActive={Boolean(mandate && !mandate.revoked)}
-                  remainingUnits={remainingUnits}
-                  onActions={() => setDrawerOpen(true)}
                   onDeposit={() => setBalanceAction('deposit')}
                   onPay={() => {
-                    const recipient = account?.recipients[0];
-                    if (recipient) setChatDraft(`Pay 10 USDC to ${recipient.label}`);
+                    props.onCancelPreview();
+                    setPaymentFlowOwner('dialog');
+                    setSendPaymentOpen(true);
                   }}
                 />
 
-                <Tabs value={tab} onValueChange={setTab} className="mt-7">
+                <Tabs value={tab} onValueChange={setTab} className="mt-5">
                   <div className="flex items-center justify-between border-b border-border">
                     <TabsList className="gap-7">
                       {(
@@ -368,16 +385,14 @@ export function Dashboard(props: DashboardProps) {
                         </TabsTrigger>
                       ))}
                     </TabsList>
-                    <span className="hidden pb-3 text-[11px] text-muted-foreground @min-[620px]:inline">
-                      Indexed by The Graph
-                    </span>
                   </div>
 
                   <TabsContent value="activity" className="mt-6">
                     <WorkspaceActivity
                       config={config}
-                      source={source}
                       visible={visible}
+                      loading={source === null && (props.activityLoading || props.page === null)}
+                      recipients={account?.recipients ?? []}
                       filter={filter}
                       setFilter={setFilter}
                       pendingCount={props.pending.length}
@@ -389,9 +404,9 @@ export function Dashboard(props: DashboardProps) {
 
                   <TabsContent value="accounts" className="mt-6 space-y-4">
                     <div>
-                      <h2 className="text-xl font-semibold tracking-tight">How your money works</h2>
+                      <h2 className="text-xl font-semibold tracking-tight">Money overview</h2>
                       <p className="mt-1 text-sm text-muted-foreground">
-                        You keep control. GOL can only use the payment funds and rules shown here.
+                        GOL can use payment funds only, not your wallet balance.
                       </p>
                     </div>
                     <AccountAndMandateControls
@@ -453,15 +468,29 @@ export function Dashboard(props: DashboardProps) {
                               Recipient
                             </span>
                             <h3 className="mt-2 text-base font-semibold">
-                              The only wallet GOL can pay
+                              {account?.recipientMode === 'all'
+                                ? 'Any wallet address'
+                                : 'Approved wallet addresses'}
                             </h3>
-                            <p className="mt-1 text-sm text-muted-foreground">
-                              {account?.recipients[0]?.label ?? 'No recipient configured'}
-                            </p>
-                            {account?.recipients[0]?.address && (
-                              <code className="mt-3 block text-[11px] text-muted-foreground">
-                                {shorten(account.recipients[0].address)}
-                              </code>
+                            {account?.recipientMode === 'all' ? (
+                              <p className="mt-1 text-sm text-muted-foreground">
+                                Every payment must name an exact address.
+                              </p>
+                            ) : (
+                              <ul className="mt-2 grid gap-2 text-sm text-muted-foreground">
+                                {account?.recipients
+                                  .filter((recipient) => recipient.confirmed)
+                                  .map((recipient) => (
+                                    <li key={recipient.address}>
+                                      {recipient.label}{' '}
+                                      <ExplorerAddressLink
+                                        config={config}
+                                        address={recipient.address}
+                                        className="text-[11px]"
+                                      />
+                                    </li>
+                                  ))}
+                              </ul>
                             )}
                           </div>
                           <ShieldCheck className="text-primary" />
@@ -469,13 +498,82 @@ export function Dashboard(props: DashboardProps) {
                       </CardContent>
                     </Card>
                     <Button
-                      className="mt-5"
+                      className="mt-5 rounded-full"
                       variant="outline"
                       onClick={props.onRevoke}
                       disabled={!mandate || mandate.revoked || props.busy !== null}
                     >
                       Turn off agent payments
                     </Button>
+
+                    <Card
+                      className="mt-6 overflow-hidden border-primary/20 bg-card shadow-none"
+                      aria-labelledby="future-payment-rules-title"
+                    >
+                      <CardContent className="p-0">
+                        <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-4">
+                          <div>
+                            <h3
+                              id="future-payment-rules-title"
+                              className="text-base font-semibold tracking-tight"
+                            >
+                              Future controls for payment funds
+                            </h3>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Planned rules for how GOL can use this account. Not active yet.
+                            </p>
+                          </div>
+                          <Badge className="rounded-full">Coming soon</Badge>
+                        </div>
+                        <div className="grid gap-px border-t border-border bg-border @min-[620px]:grid-cols-3">
+                          <FutureRuleCard
+                            icon={UserRoundCheck}
+                            title="Approval gates"
+                            description="Require an owner or team quorum for larger payments."
+                          />
+                          <FutureRuleCard
+                            icon={CalendarClock}
+                            title="Recurring budgets"
+                            description="Reset an agent's available allowance on a schedule."
+                          />
+                          <FutureRuleCard
+                            icon={Blocks}
+                            title="Protocol allowlist"
+                            description="Restrict funds to approved protocols and contract addresses."
+                          />
+                          <FutureRuleCard
+                            icon={HandCoins}
+                            title="Query allowance"
+                            description="Set a dedicated USDC budget for x402 data services."
+                          />
+                          <FutureRuleCard
+                            icon={Gauge}
+                            title="Payment rate limits"
+                            description="Limit how often the agent can move payment funds."
+                          />
+                          <FutureRuleCard
+                            icon={BadgeCheck}
+                            title="Outcome verification"
+                            description="Continue only when the on-chain result matches the intent."
+                          />
+                          <FutureRuleCard
+                            icon={FileCheck2}
+                            title="Purpose-bound payments"
+                            description="Bind funds to an approved invoice, order, or task proof."
+                          />
+                          <FutureRuleCard
+                            icon={GitBranch}
+                            title="Sub-agent budgets"
+                            description="Delegate smaller scoped allowances to specialized agents."
+                          />
+                          <FutureRuleCard
+                            icon={ShieldAlert}
+                            title="Automatic circuit breaker"
+                            description="Pause the agent after repeated refusals or unusual activity."
+                          />
+                        </div>
+                      </CardContent>
+                    </Card>
                   </TabsContent>
                 </Tabs>
 
@@ -483,10 +581,10 @@ export function Dashboard(props: DashboardProps) {
                   <ConsentPanel
                     config={config}
                     account={account}
-                    recipientLabelInput={props.recipientLabelInput}
-                    setRecipientLabelInput={props.setRecipientLabelInput}
-                    recipientInput={props.recipientInput}
-                    setRecipientInput={props.setRecipientInput}
+                    recipientDrafts={props.recipientDrafts}
+                    setRecipientDrafts={props.setRecipientDrafts}
+                    recipientMode={props.recipientMode}
+                    setRecipientMode={props.setRecipientMode}
                     onCancel={() => props.setConsentOpen(false)}
                     onConfirm={props.onProvisionAgent}
                     disabled={props.busy !== null}
@@ -494,6 +592,7 @@ export function Dashboard(props: DashboardProps) {
                 )}
                 {props.transferReview && (
                   <TransferReviewPanel
+                    config={config}
                     review={props.transferReview}
                     onCancel={() => props.setTransferReview(null)}
                     onConfirm={props.onConfirmTransfer}
@@ -503,7 +602,11 @@ export function Dashboard(props: DashboardProps) {
                 {balanceAction && account?.accountAddress && (
                   <AmountEntryPanel
                     action={balanceAction}
-                    availableUnits={account.balances.accountUsdcUnits}
+                    availableUnits={
+                      balanceAction === 'deposit'
+                        ? account.balances.ownerUsdcUnits
+                        : account.balances.accountUsdcUnits
+                    }
                     onCancel={() => setBalanceAction(null)}
                     onConfirm={(amountUnits) => {
                       setBalanceAction(null);
@@ -512,8 +615,26 @@ export function Dashboard(props: DashboardProps) {
                     }}
                   />
                 )}
+                {sendPaymentOpen && account && (
+                  <SendPaymentDialog
+                    config={config}
+                    account={account}
+                    preview={props.preview}
+                    payment={props.payment}
+                    onCancel={() => {
+                      props.onCancelPreview();
+                      setSendPaymentOpen(false);
+                    }}
+                    onReview={(instruction) => {
+                      props.onPreview(instruction);
+                    }}
+                    onCancelPreview={props.onCancelPreview}
+                    onConfirm={props.onSubmitInstruction}
+                  />
+                )}
                 {props.mandateReview && (
                   <MandateReviewPanel
+                    config={config}
                     draft={props.mandateReview}
                     onChange={props.setMandateReview}
                     onCancel={() => props.setMandateReview(null)}
@@ -533,7 +654,6 @@ export function Dashboard(props: DashboardProps) {
                     disabled={props.busy !== null}
                   />
                 )}
-                <TransactionStatus tx={props.tx} config={config} />
                 {exportTarget && (
                   <PrivateKeyWarning
                     onCancel={() => {
@@ -575,10 +695,15 @@ export function Dashboard(props: DashboardProps) {
           >
             <AgentChat
               ownerAddress={account?.ownerAddress}
-              recipientLabel={account?.recipients[0]?.label ?? null}
+              recipientLabel={
+                account?.recipientMode === 'all' ? null : (account?.recipients[0]?.label ?? null)
+              }
               draft={chatDraft}
               onDraftChange={setChatDraft}
-              onMandatePrompt={(prompt) => props.onPreview(prompt)}
+              onMandatePrompt={(prompt) => {
+                setPaymentFlowOwner('chat');
+                props.onPreview(prompt);
+              }}
               onAskRecord={(question) => props.onAsk(question)}
               onOpenActions={() => setDrawerOpen(true)}
               onAaveReview={(result) => {
@@ -601,14 +726,18 @@ export function Dashboard(props: DashboardProps) {
                 }
                 if (tool === 'submit_instruction') {
                   const requested = arguments_.instruction;
+                  setPaymentFlowOwner('chat');
                   props.onPreview(typeof requested === 'string' ? requested : chatDraft);
                 }
               }}
               mandateReady={canRun(props)}
-              preview={props.preview}
+              perPaymentCapUnits={mandate?.perPaymentCapUnits ?? null}
+              preview={paymentFlowOwner === 'dialog' ? null : props.preview}
               onConfirmPreview={props.onSubmitInstruction}
               onCancelPreview={props.onCancelPreview}
-              payment={props.payment}
+              onClearConversation={props.onClearConversation}
+              {...(paymentFlowOwner === 'dialog' ? {} : { payment: props.payment })}
+              {...(props.tx.kind === 'aave_action' ? { transaction: props.tx } : {})}
               answer={props.answer}
               busy={props.asking || props.busy !== null}
             />
@@ -617,8 +746,14 @@ export function Dashboard(props: DashboardProps) {
       </div>
       <ActionDrawer
         open={drawerOpen}
-        recipientLabel={account?.recipients[0]?.label ?? 'Approved recipient'}
-        recipientAddress={account?.recipients[0]?.address}
+        recipientLabel={
+          account?.recipientMode === 'all'
+            ? 'Any address'
+            : (account?.recipients[0]?.label ?? 'Approved recipient')
+        }
+        recipientAddress={
+          account?.recipientMode === 'all' ? undefined : account?.recipients[0]?.address
+        }
         onClose={() => setDrawerOpen(false)}
         onListTokens={props.onListMoneyTokens}
         onQuote={props.onQuoteMoneySwap}
@@ -631,10 +766,12 @@ export function Dashboard(props: DashboardProps) {
 }
 
 function AccountLoadingGate({
+  config,
   theme,
   onThemeChange,
   ownerAddress,
 }: {
+  config: PublicConfig;
   theme: ThemeMode;
   onThemeChange: (theme: ThemeMode) => void;
   ownerAddress: string | null;
@@ -645,17 +782,13 @@ function AccountLoadingGate({
       aria-busy="true"
     >
       <header className="flex h-[68px] items-center justify-between border-b border-border px-4 sm:px-7">
-        <a className="flex items-center gap-2.5 text-sm font-bold tracking-[.16em]" href="#account">
+        <a className="flex items-center gap-2" href="#account">
           <img className="size-8" src="/gol-mark-blue.svg" alt="" />
-          <span className="font-mono text-sm tracking-[.22em]">GOL</span>
+          <span className="font-pixel-wordmark text-[10px] sm:text-sm">GOL Network</span>
         </a>
         <div className="flex items-center gap-3">
           <ThemeIconButton theme={theme} onChange={onThemeChange} />
-          {ownerAddress ? (
-            <Badge variant="secondary" className="font-mono text-[10px]">
-              {ownerAddress.slice(0, 8)}...{ownerAddress.slice(-4)}
-            </Badge>
-          ) : null}
+          {ownerAddress ? <ExplorerAddressLink config={config} address={ownerAddress} /> : null}
         </div>
       </header>
       <section
@@ -666,9 +799,9 @@ function AccountLoadingGate({
         <Card className="w-full max-w-sm shadow-panel">
           <CardContent className="flex flex-col items-center px-6 py-10 text-center">
             <LoaderCircle className="size-6 animate-spin text-primary" aria-hidden="true" />
-            <h1 className="mt-4 text-lg font-semibold">Restoring your account</h1>
+            <h1 className="mt-4 text-lg font-semibold">Loading your account</h1>
             <p className="mt-2 text-sm text-muted-foreground">
-              Checking your payment account and rules.
+              Loading your payment account and rules.
             </p>
           </CardContent>
         </Card>
@@ -682,7 +815,6 @@ function SetupGate(
     theme: ThemeMode;
     onThemeChange: (theme: ThemeMode) => void;
     nextStep: SetupStep;
-    onOpenActions: () => void;
     onExport: (address: string) => void;
     exportTarget: string | null;
     exportError: string | null;
@@ -692,6 +824,12 @@ function SetupGate(
 ) {
   const loading = props.account === null && props.accountError === null;
   const visibleStage = setupStage(props.nextStep.id);
+  const reconnectingAgent = Boolean(
+    props.nextStep.id === 'agent_wallet' &&
+    props.account?.accountAddress &&
+    props.account.agentAddress &&
+    !props.account.linked,
+  );
   const [paymentBudgetOpen, setPaymentBudgetOpen] = useState(false);
 
   const runNextStep = () => {
@@ -708,21 +846,11 @@ function SetupGate(
       className={`theme-${props.theme} min-h-screen max-w-none bg-background text-foreground transition-colors`}
     >
       <header className="flex h-[68px] items-center justify-between border-b border-border px-4 sm:px-7">
-        <a className="flex items-center gap-2.5 text-sm font-bold tracking-[.16em]" href="#setup">
+        <a className="flex items-center gap-2" href="#setup">
           <img className="size-8" src="/gol-mark-blue.svg" alt="" />
-          <span className="font-mono text-sm tracking-[.22em]">GOL</span>
+          <span className="font-pixel-wordmark text-[10px] sm:text-sm">GOL Network</span>
         </a>
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="rounded-full"
-            aria-label="Actions"
-            onClick={props.onOpenActions}
-          >
-            <CirclePlus className="size-4" />
-            <span className="hidden sm:inline">Actions</span>
-          </Button>
           <ThemeIconButton theme={props.theme} onChange={props.onThemeChange} />
           <WalletAccountPill
             config={props.config}
@@ -742,10 +870,10 @@ function SetupGate(
             <div className="flex items-start justify-between gap-5">
               <div>
                 <span className="font-mono text-[10px] uppercase tracking-[.18em] text-primary">
-                  Account setup
+                  {reconnectingAgent ? 'Signer maintenance' : 'Account setup'}
                 </span>
                 <h1 className="mt-2 text-2xl font-semibold tracking-tight">
-                  Set up agent payments
+                  {reconnectingAgent ? 'Reconnect payment agent' : 'Set up agent payments'}
                 </h1>
               </div>
               <Badge variant="secondary" className="shrink-0 font-mono text-[10px]">
@@ -807,11 +935,16 @@ function SetupGate(
                     <span className="block text-[10px] uppercase tracking-wider text-muted-foreground">
                       {props.nextStep.id === 'agent_gas' ? 'Agent address' : 'Your wallet address'}
                     </span>
-                    <code className="block truncate text-xs">
-                      {props.nextStep.id === 'agent_gas'
-                        ? props.account?.agentAddress
-                        : props.account?.ownerAddress}
-                    </code>
+                    <ExplorerAddressLink
+                      config={props.config}
+                      address={
+                        (props.nextStep.id === 'agent_gas'
+                          ? props.account?.agentAddress
+                          : props.account?.ownerAddress)!
+                      }
+                      display="full"
+                      className="mt-1 max-w-full text-xs"
+                    />
                   </div>
                   <CopyAddress
                     value={
@@ -862,11 +995,14 @@ function SetupGate(
 
             {props.account?.ownerAddress ? (
               <p className="mt-5 text-center font-mono text-[10px] text-muted-foreground">
-                Your wallet {shorten(props.account.ownerAddress)}
+                Your wallet{' '}
+                <ExplorerAddressLink
+                  config={props.config}
+                  address={props.account.ownerAddress}
+                  className="inline-flex"
+                />
               </p>
             ) : null}
-
-            <TransactionStatus tx={props.tx} config={props.config} />
           </CardContent>
         </Card>
       </section>
@@ -875,10 +1011,10 @@ function SetupGate(
         <ConsentPanel
           config={props.config}
           account={props.account}
-          recipientLabelInput={props.recipientLabelInput}
-          setRecipientLabelInput={props.setRecipientLabelInput}
-          recipientInput={props.recipientInput}
-          setRecipientInput={props.setRecipientInput}
+          recipientDrafts={props.recipientDrafts}
+          setRecipientDrafts={props.setRecipientDrafts}
+          recipientMode={props.recipientMode}
+          setRecipientMode={props.setRecipientMode}
           onCancel={() => props.setConsentOpen(false)}
           onConfirm={props.onProvisionAgent}
           disabled={props.busy !== null}
@@ -886,17 +1022,20 @@ function SetupGate(
       ) : null}
       {props.transferReview ? (
         <TransferReviewPanel
+          config={props.config}
           review={props.transferReview}
           onCancel={() => props.setTransferReview(null)}
           onConfirm={props.onConfirmTransfer}
           disabled={props.busy !== null}
         />
       ) : null}
-      {paymentBudgetOpen && props.account?.recipients[0] ? (
+      {paymentBudgetOpen && props.account ? (
         <PaymentBudgetPanel
+          config={props.config}
           availableUnits={props.account.balances.ownerUsdcUnits}
           defaultUnits={props.config.accountTargetUnits}
-          recipient={props.account.recipients[0]}
+          recipients={props.account.recipients.filter((recipient) => recipient.confirmed)}
+          allowAnyRecipient={props.account.recipientMode === 'all'}
           accountAddress={props.account.accountAddress!}
           onCancel={() => setPaymentBudgetOpen(false)}
           onConfirm={(amountUnits, perPaymentCapUnits, cumulativeCapUnits) => {
@@ -907,6 +1046,7 @@ function SetupGate(
       ) : null}
       {props.mandateReview ? (
         <MandateReviewPanel
+          config={props.config}
           draft={props.mandateReview}
           onChange={props.setMandateReview}
           onCancel={() => props.setMandateReview(null)}
@@ -934,32 +1074,30 @@ function setupStage(id: SetupStep['id']): 1 | 2 | 3 {
 function AccountProfileHeader({
   config,
   account,
-  mandateActive,
-  remainingUnits,
-  onActions,
   onDeposit,
   onPay,
 }: {
   config: PublicConfig;
   account: AccountSnapshot | null;
-  mandateActive: boolean;
-  remainingUnits: bigint;
-  onActions: () => void;
   onDeposit: () => void;
   onPay: () => void;
 }) {
-  const ownerAddress = account?.ownerAddress ?? null;
-  const accountBalanceUnits = BigInt(account?.balances.accountUsdcUnits ?? '0');
-  const availableUnits =
-    accountBalanceUnits < remainingUnits ? accountBalanceUnits : remainingUnits;
-  const accountBalance = formatUsdc(accountBalanceUnits);
-  const avatarSeed = encodeURIComponent((ownerAddress ?? 'gol-owner').toLowerCase());
+  const paymentAccountAddress = account?.accountAddress ?? null;
+  const paymentFunds = BigInt(account?.balances.accountUsdcUnits ?? '0');
+  const mandate = account?.mandate ?? null;
+  const rawLimitLeft =
+    mandate && !mandate.revoked
+      ? BigInt(mandate.cumulativeCapUnits) - BigInt(mandate.spentUnits)
+      : 0n;
+  const limitLeft = rawLimitLeft > 0n ? rawLimitLeft : 0n;
+  const availableToPay = paymentFunds < limitLeft ? paymentFunds : limitLeft;
+  const avatarSeed = encodeURIComponent((paymentAccountAddress ?? 'gol-account').toLowerCase());
 
   return (
-    <div className="flex flex-col gap-6 @min-[720px]:flex-row @min-[720px]:items-center @min-[720px]:justify-between">
+    <div className="flex flex-col gap-5 @min-[720px]:flex-row @min-[720px]:items-center @min-[720px]:justify-between">
       <div className="flex min-w-0 items-center gap-4">
         <span className="relative shrink-0">
-          <Avatar className="size-16 border border-border">
+          <Avatar className="size-14 border border-border">
             <AvatarImage
               src={`https://api.dicebear.com/10.x/critters/svg?seed=${avatarSeed}`}
               alt=""
@@ -978,41 +1116,51 @@ function AccountProfileHeader({
         </span>
 
         <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-xs text-muted-foreground">
-              {ownerAddress ? shorten(ownerAddress) : 'Personal wallet'}
-            </span>
-            <Badge variant={mandateActive ? 'default' : 'warning'}>
-              {mandateActive ? 'Agent ready' : 'Setup required'}
-            </Badge>
+          <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+            {paymentAccountAddress ? (
+              <span className="font-mono">
+                Payment account{' '}
+                <ExplorerAddressLink
+                  config={config}
+                  address={paymentAccountAddress}
+                  className="inline-flex"
+                />
+              </span>
+            ) : (
+              <span className="font-mono">Payment account</span>
+            )}
           </div>
-          <span className="mt-3 block text-xs text-muted-foreground">Ready to pay</span>
-          <div className="mt-1 flex flex-wrap items-end gap-2">
-            <strong className="text-4xl font-semibold leading-none tracking-tight @min-[520px]:text-5xl">
-              {formatUsdc(availableUnits)} USDC
+          <div className="mt-2 flex flex-wrap items-baseline gap-2">
+            <strong className="text-4xl font-semibold leading-none tracking-tight">
+              {formatUsdc(paymentFunds)} USDC
             </strong>
+            <span className="text-sm text-muted-foreground">payment funds</span>
           </div>
-          <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
-            <span>{accountBalance} USDC in payment funds</span>
-            <span>{formatUsdc(remainingUnits)} USDC allowed by your rules</span>
+          <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+            {availableToPay < paymentFunds ? (
+              <span className="rounded-full bg-muted px-2.5 py-1">
+                {formatUsdc(availableToPay)} USDC usable under rules
+              </span>
+            ) : null}
+            {mandate && !mandate.revoked ? (
+              <span className="rounded-full bg-muted px-2.5 py-1">
+                {formatUsdc(limitLeft)} USDC rule limit left
+              </span>
+            ) : null}
           </div>
         </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button className="rounded-full" onClick={onActions}>
-          <CirclePlus className="size-4" aria-hidden="true" />
-          Actions
-        </Button>
         <Button
-          variant="outline"
-          className="rounded-full"
+          variant="default"
+          className="rounded-full px-5"
           onClick={onDeposit}
           disabled={!account?.accountAddress}
         >
           Add funds
         </Button>
-        <Button variant="outline" className="rounded-full" onClick={onPay}>
+        <Button variant="outline" className="rounded-full px-5" onClick={onPay}>
           Send payment
         </Button>
       </div>
@@ -1031,10 +1179,33 @@ function RuleCard({ label, value }: { label: string; value: string }) {
   );
 }
 
+function FutureRuleCard({
+  icon: Icon,
+  title,
+  description,
+}: {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="flex min-h-28 items-start gap-3 bg-card p-5">
+      <span className="grid size-9 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
+        <Icon className="size-4" aria-hidden="true" />
+      </span>
+      <div className="min-w-0 pt-0.5">
+        <strong className="block text-sm">{title}</strong>
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{description}</p>
+      </div>
+    </div>
+  );
+}
+
 function WorkspaceActivity(props: {
   config: PublicConfig;
-  source: ActivityPage | null;
   visible: ReturnType<typeof mergeTimeline>;
+  loading: boolean;
+  recipients: AccountSnapshot['recipients'];
   filter: TimelineFilter;
   setFilter: (filter: TimelineFilter) => void;
   pendingCount: number;
@@ -1044,20 +1215,21 @@ function WorkspaceActivity(props: {
 }) {
   return (
     <div>
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-end justify-between gap-5">
         <div>
-          <span className="font-mono text-[9px] uppercase tracking-[.16em] text-primary">
+          <span className="flex items-center gap-2.5 font-mono text-xs uppercase tracking-[.16em] text-primary">
+            <img src="/the-graph-logo.png" alt="" className="size-6 rounded-full object-cover" />
             The Graph
           </span>
-          <h3 className="mt-1 text-lg font-semibold">Indexed activity</h3>
+          <h3 className="mt-1 text-xl font-semibold tracking-tight">Activity</h3>
         </div>
-        <div className="flex rounded-full bg-muted p-1">
+        <div className="flex items-center gap-5">
           {(['ALL', 'EXECUTED', 'REFUSED'] as const).map((value) => (
             <Button
               key={value}
               size="sm"
               variant="ghost"
-              className={`rounded-full text-[10px] ${props.filter === value ? 'bg-card text-primary shadow-sm' : ''}`}
+              className={`h-auto rounded-none border-b-2 px-0 py-1 text-xs ${props.filter === value ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground'}`}
               onClick={() => props.setFilter(value)}
             >
               {value}
@@ -1065,19 +1237,12 @@ function WorkspaceActivity(props: {
           ))}
         </div>
       </div>
-      <div className="mt-5 flex items-center justify-between border-y border-border py-3 text-[10px] text-muted-foreground">
-        <span className="flex items-center gap-2">
-          <ShieldCheck className="size-4 text-primary" /> {freshnessLabel(props.source, null)}
-        </span>
-        <span>
-          {props.source?.indexedBlock
-            ? 'Indexed through block ' + props.source.indexedBlock
-            : 'No indexed block'}
-        </span>
-      </div>
       {props.pendingCount > 0 && (
-        <div className="mt-3 flex items-center justify-between rounded-xl bg-accent px-4 py-3 text-xs text-accent-foreground">
-          <span>{props.pendingCount} on-chain result awaiting indexing.</span>
+        <div className="mt-4 flex items-center justify-between gap-3 border-l-2 border-primary bg-primary/5 px-4 py-3 text-xs">
+          <span className="flex items-center gap-2 text-foreground">
+            <LoaderCircle className="size-4 animate-spin text-primary" />
+            {props.pendingCount} on-chain result awaiting indexing.
+          </span>
           {props.indexingWindowClosed && (
             <Button
               size="sm"
@@ -1090,86 +1255,275 @@ function WorkspaceActivity(props: {
           )}
         </div>
       )}
-      {props.visible.length === 0 && props.pendingCount === 0 ? (
-        <div className="grid min-h-[300px] place-items-center text-center">
+      {props.loading ? (
+        <div
+          className="grid min-h-[260px] place-items-center text-center"
+          aria-live="polite"
+          data-testid="activity-loading"
+        >
           <div>
-            <div className="mx-auto grid size-12 place-items-center rounded-xl bg-muted text-muted-foreground">
-              <WalletCards size={20} />
-            </div>
-            <strong className="mt-4 block text-sm">No activity loaded</strong>
-            <span className="mt-1 block text-xs text-muted-foreground">
-              Run an instruction after setup.
-            </span>
+            <LoaderCircle className="mx-auto size-5 animate-spin text-primary" />
+            <strong className="mt-3 block text-sm">Loading on-chain activity</strong>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Reading account events and indexed payments.
+            </p>
+          </div>
+        </div>
+      ) : props.visible.length === 0 && props.pendingCount === 0 ? (
+        <div className="grid min-h-[260px] place-items-center text-center">
+          <div>
+            <WalletCards className="mx-auto text-muted-foreground" size={20} />
+            <strong className="mt-3 block text-sm">No activity yet</strong>
           </div>
         </div>
       ) : (
-        <ol className="mt-3 divide-y divide-border" data-testid="activity-timeline">
-          {props.visible.map((entry) => {
-            const record = entry.kind === 'indexed' ? entry.record : entry.pending;
-            const txHash =
-              entry.kind === 'indexed' ? entry.record.transactionHash : entry.pending.txHash;
-            const refused = record.outcome === 'REFUSED';
-            return (
-              <li
-                key={entry.key}
-                data-pending={entry.kind === 'pending' ? 'true' : 'false'}
-                className={`grid grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-4 py-5 ${entry.kind === 'pending' ? 'opacity-70' : ''}`}
-              >
-                <span
-                  className={`grid size-10 place-items-center rounded-lg text-sm font-semibold ${refused ? 'bg-destructive text-destructive-foreground' : 'bg-primary text-primary-foreground'}`}
+        <div className="mt-4 overflow-hidden rounded-lg border border-border">
+          <div className="hidden grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_7rem_8rem_10rem] gap-4 border-b border-border bg-muted/30 px-4 py-3 font-mono text-[11px] uppercase tracking-wider text-muted-foreground md:grid">
+            <span>Activity</span>
+            <span>Details</span>
+            <span>Amount</span>
+            <span>Limit left</span>
+            <span>Date</span>
+          </div>
+          <ol className="divide-y divide-border" data-testid="activity-timeline">
+            {props.visible.map((entry) => {
+              if (entry.kind === 'lifecycle') {
+                return (
+                  <LifecycleActivityRow key={entry.key} config={props.config} event={entry.event} />
+                );
+              }
+              const record = entry.kind === 'indexed' ? entry.record : entry.pending;
+              const txHash =
+                entry.kind === 'indexed' ? entry.record.transactionHash : entry.pending.txHash;
+              const refused = record.outcome === 'REFUSED';
+              const recipient = props.recipients.find(
+                (item) => item.address.toLowerCase() === record.recipient.toLowerCase(),
+              );
+              const timestamp = formatActivityTimestamp(
+                entry.kind === 'indexed'
+                  ? Number(entry.record.timestamp) * 1_000
+                  : entry.pending.confirmedAt,
+              );
+              return (
+                <li
+                  key={entry.key}
+                  data-pending={entry.kind === 'pending' ? 'true' : 'false'}
+                  className={`grid gap-4 px-4 py-4 transition-colors hover:bg-muted/20 md:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_7rem_8rem_10rem] md:items-center ${entry.kind === 'pending' ? 'opacity-75' : ''}`}
                 >
-                  {refused ? '!' : '✓'}
-                </span>
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <strong className="text-sm">{formatUsdc(BigInt(record.attempted))} USDC</strong>
+                  <div className="flex min-w-0 items-start gap-3">
                     <span
-                      className={`rounded-full border px-2 py-1 text-[9px] font-medium ${refused ? 'border-destructive/30 text-destructive' : 'border-primary/30 text-primary'}`}
+                      className={`mt-0.5 grid size-8 shrink-0 place-items-center rounded-md ${refused ? 'bg-warning/10 text-warning' : 'bg-primary/10 text-primary'}`}
                     >
-                      {record.outcome}
+                      {entry.kind === 'pending' ? (
+                        <LoaderCircle className="size-4 animate-spin" />
+                      ) : refused ? (
+                        <CircleAlert className="size-4" />
+                      ) : (
+                        <CheckCircle2 className="size-4" />
+                      )}
                     </span>
+                    <div className="min-w-0">
+                      <strong
+                        className={`text-base ${refused ? 'text-warning' : 'text-foreground'}`}
+                      >
+                        {entry.kind === 'pending'
+                          ? 'Indexing'
+                          : refused
+                            ? 'Payment refused'
+                            : 'Payment executed'}
+                      </strong>
+                      <span className="mt-1 block font-mono text-xs text-muted-foreground">
+                        Payment ID {shorten(record.requestId)}
+                      </span>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {entry.kind === 'pending'
+                          ? `On-chain; indexing pending. ${refused ? `Successful on-chain refusal: ${record.rule}` : 'Payment released by the account contract.'}`
+                          : refused
+                            ? `Successful on-chain refusal: ${record.rule}`
+                            : 'Confirmed on-chain.'}
+                      </p>
+                    </div>
                   </div>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {entry.kind === 'pending'
-                      ? `On-chain; indexing pending. ${refused ? `Successful on-chain refusal: ${record.rule}` : 'Payment released by the account contract.'}`
-                      : refused
-                        ? `Successful on-chain refusal: ${record.rule}`
-                        : `Paid ${shorten(record.recipient)}`}
-                  </p>
-                  <small className="mt-2 block font-mono text-[9px] text-muted-foreground">
-                    Request {shorten(record.requestId)}.{' '}
+
+                  <div className="min-w-0">
+                    <span className="mb-1 block text-[11px] uppercase text-muted-foreground md:hidden">
+                      Recipient
+                    </span>
+                    <strong className="block truncate text-base">
+                      {recipient?.label ?? 'Wallet address'}
+                    </strong>
+                    <ExplorerAddressLink
+                      config={props.config}
+                      address={record.recipient}
+                      className="mt-1 text-xs"
+                    />
+                  </div>
+
+                  <div>
+                    <span className="mb-1 block text-[11px] uppercase text-muted-foreground md:hidden">
+                      Amount
+                    </span>
+                    <strong className="text-base">
+                      {formatUsdc(BigInt(record.attempted))} USDC
+                    </strong>
+                  </div>
+
+                  <div>
+                    <span className="mb-1 block text-[11px] uppercase text-muted-foreground md:hidden">
+                      Limit left
+                    </span>
+                    <strong className="text-base">
+                      {formatUsdc(BigInt(record.headroom))} USDC
+                    </strong>
+                  </div>
+
+                  <div className="min-w-0 text-xs text-muted-foreground">
+                    {timestamp && <span className="block">{timestamp}</span>}
                     <a
-                      className="text-primary hover:underline"
+                      className="mt-1 inline-flex items-center gap-1 font-medium text-primary hover:underline"
                       href={explorerTxUrl(props.config, txHash)}
                       target="_blank"
                       rel="noreferrer"
                     >
-                      transaction ↗
+                      Transaction
+                      <ArrowUpRight className="size-3" />
                     </a>
-                  </small>
-                </div>
-                <div className="text-right">
-                  <span className="block font-mono text-[9px] uppercase tracking-[.14em] text-muted-foreground">
-                    Headroom
-                  </span>
-                  <strong className="mt-1 block text-lg">
-                    {formatUsdc(BigInt(record.headroom))}
-                  </strong>
-                  <small className="text-[9px] text-muted-foreground">USDC</small>
-                </div>
-              </li>
-            );
-          })}
-        </ol>
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        </div>
       )}
     </div>
   );
 }
 
+function LifecycleActivityRow({
+  config,
+  event,
+}: {
+  config: PublicConfig;
+  event: LifecycleEventRecord;
+}) {
+  const copy = {
+    ACCOUNT_CREATED: {
+      title: 'Payment account created',
+      detail: 'The owner created this payment account on Arc.',
+      addressLabel: 'Account',
+      address: event.account,
+    },
+    FUNDS_ADDED: {
+      title: 'Funds added',
+      detail: 'USDC was added to the payment funds.',
+      addressLabel: 'Account',
+      address: event.account,
+    },
+    FUNDS_WITHDRAWN: {
+      title: 'Funds withdrawn',
+      detail: 'Unused USDC was returned to the owner wallet.',
+      addressLabel: 'Account',
+      address: event.account,
+    },
+    MANDATE_CREATED: {
+      title: 'Payment rules approved',
+      detail: `Mandate ${event.mandateId ?? ''} became active.`,
+      addressLabel: 'Agent',
+      address: event.agent ?? event.account,
+    },
+    MANDATE_REVOKED: {
+      title: 'Payment rules revoked',
+      detail: `Mandate ${event.mandateId ?? ''} can no longer authorize payments.`,
+      addressLabel: 'Agent',
+      address: event.agent ?? event.account,
+    },
+  }[event.kind];
+  const timestamp = formatActivityTimestamp(Number(event.timestamp) * 1_000);
+
+  return (
+    <li className="grid gap-4 px-4 py-4 transition-colors hover:bg-muted/20 md:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_7rem_8rem_10rem] md:items-center">
+      <div className="flex min-w-0 items-start gap-3">
+        <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-md bg-primary/10 text-primary">
+          {event.kind === 'ACCOUNT_CREATED' ? (
+            <WalletCards className="size-4" />
+          ) : event.kind === 'FUNDS_ADDED' ? (
+            <CirclePlus className="size-4" />
+          ) : event.kind === 'FUNDS_WITHDRAWN' ? (
+            <ArrowUpRight className="size-4" />
+          ) : (
+            <ShieldCheck className="size-4" />
+          )}
+        </span>
+        <div className="min-w-0">
+          <strong className="text-base text-foreground">{copy.title}</strong>
+          <p className="mt-1 text-xs text-muted-foreground">{copy.detail}</p>
+        </div>
+      </div>
+
+      <div className="min-w-0">
+        <span className="mb-1 block text-[11px] uppercase text-muted-foreground">
+          {copy.addressLabel}
+        </span>
+        <ExplorerAddressLink config={config} address={copy.address} className="text-xs" />
+      </div>
+
+      <div>
+        <span className="mb-1 block text-[11px] uppercase text-muted-foreground md:hidden">
+          Amount
+        </span>
+        <strong className="text-base">
+          {event.amountUnits ? `${formatUsdc(BigInt(event.amountUnits))} USDC` : '-'}
+        </strong>
+      </div>
+
+      <div>
+        <span className="mb-1 block text-[11px] uppercase text-muted-foreground md:hidden">
+          Limit left
+        </span>
+        <span className="text-sm text-muted-foreground">-</span>
+      </div>
+
+      <div className="min-w-0 text-xs text-muted-foreground">
+        {timestamp ? <span className="block">{timestamp}</span> : null}
+        <a
+          className="mt-1 inline-flex items-center gap-1 font-medium text-primary hover:underline"
+          href={explorerTxUrl(config, event.transactionHash)}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Transaction
+          <ArrowUpRight className="size-3" />
+        </a>
+      </div>
+    </li>
+  );
+}
+
 function canRun(props: DashboardProps): boolean {
-  if (!props.account?.accountAddress || props.account.activeMandateId === '0') return false;
-  const stage = props.payment.stage;
-  return PAYMENT_STAGES[stage].terminal;
+  return props.steps.some((step) => step.id === 'mandate' && step.status === 'complete');
+}
+
+function formatActivityTimestamp(timestampMs: number): string | null {
+  if (!Number.isFinite(timestampMs) || timestampMs <= 0) return null;
+  const date = new Date(timestampMs);
+  if (Number.isNaN(date.getTime())) return null;
+  const month = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ][date.getUTCMonth()];
+  const hour = String(date.getUTCHours()).padStart(2, '0');
+  const minute = String(date.getUTCMinutes()).padStart(2, '0');
+  return `${month} ${date.getUTCDate()}, ${date.getUTCFullYear()}, ${hour}:${minute} UTC`;
 }
 
 function SignInGate({
@@ -1206,7 +1560,7 @@ function SignInGate({
           <CardContent className="px-6 py-8 sm:px-12 sm:py-12">
             <div className="flex flex-col items-center text-center">
               <img className="size-16" src="/gol-mark-blue.svg" alt="GOL" />
-              <h1 className="mt-5 text-3xl font-semibold tracking-tight">GOL Network</h1>
+              <h1 className="font-pixel-wordmark mt-5 text-2xl sm:text-3xl">GOL Network</h1>
               <p className="mt-2 text-sm leading-copy text-muted-foreground">
                 Sign in to your owner-controlled account
               </p>
@@ -1404,47 +1758,56 @@ function AccountAndMandateControls(props: {
     agentStep.status === 'complete' &&
     (!agentGas || agentGas.status === 'complete');
   const accountBalance = BigInt(props.account?.balances.accountUsdcUnits ?? '0');
-  const ruleRemaining = mandate
-    ? BigInt(mandate.cumulativeCapUnits) - BigInt(mandate.spentUnits)
-    : 0n;
-  const recipient = props.account?.recipients[0] ?? null;
+  const rawRuleRemaining =
+    mandate && !mandate.revoked
+      ? BigInt(mandate.cumulativeCapUnits) - BigInt(mandate.spentUnits)
+      : 0n;
+  const ruleRemaining = rawRuleRemaining > 0n ? rawRuleRemaining : 0n;
+  const availablePayment = accountBalance < ruleRemaining ? accountBalance : ruleRemaining;
+  const recipients = props.account?.recipients.filter((recipient) => recipient.confirmed) ?? [];
+  const ownerAvatarSeed = encodeURIComponent(
+    (props.account?.ownerAddress ?? 'gol-owner').toLowerCase(),
+  );
+  const paymentAvatarSeed = encodeURIComponent(
+    (props.account?.accountAddress ?? 'gol-payment-account').toLowerCase(),
+  );
 
   return (
-    <div className="grid gap-3">
-      <div className="grid gap-3 @min-[620px]:grid-cols-2">
-        <Card className="bg-muted shadow-none">
-          <CardContent className="flex h-full flex-col p-5">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-sm font-medium">Your wallet</span>
-              <Badge variant={ownerGas.status === 'complete' ? 'default' : 'warning'}>
-                {ownerGas.status === 'complete' ? 'Ready' : 'Needs gas'}
-              </Badge>
+    <div className="grid gap-4">
+      <div className="grid gap-3 md:grid-cols-2" data-step="account">
+        <Card className="shadow-none">
+          <CardContent className="p-5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <Avatar className="size-10 border border-border">
+                  <AvatarImage
+                    src={`https://api.dicebear.com/10.x/critters/svg?seed=${ownerAvatarSeed}`}
+                    alt=""
+                  />
+                  <AvatarFallback>
+                    <Wallet className="size-5" aria-hidden="true" />
+                  </AvatarFallback>
+                </Avatar>
+                <div>
+                  <h3 className="text-sm font-medium">Your wallet</h3>
+                  <p className="text-xs text-muted-foreground">Controlled only by you</p>
+                </div>
+              </div>
+              {ownerGas.status !== 'complete' ? <Badge variant="warning">Needs gas</Badge> : null}
             </div>
-            <strong className="mt-3 block text-xl">
+            <strong className="mt-5 block text-2xl tracking-tight">
               {formatUsdc(BigInt(props.account?.balances.ownerUsdcUnits ?? '0'))} USDC
             </strong>
-            <p className="mt-1 text-xs text-muted-foreground">Only you can spend this money.</p>
             {props.account?.ownerAddress ? (
-              <div className="mt-auto flex items-center gap-1 pt-5 font-mono text-[10px] text-muted-foreground">
-                <code title={props.account.ownerAddress}>
-                  {shorten(props.account.ownerAddress)}
-                </code>
+              <div className="mt-4 flex items-center gap-1 text-xs text-muted-foreground">
+                <span className="mr-1">Wallet</span>
+                <ExplorerAddressLink config={props.config} address={props.account.ownerAddress} />
                 <CopyAddress value={props.account.ownerAddress} />
-                <Button asChild variant="ghost" size="icon" className="size-6 rounded-full">
-                  <a
-                    href={explorerAddressUrl(props.config, props.account.ownerAddress)}
-                    target="_blank"
-                    rel="noreferrer"
-                    aria-label="View your wallet on explorer"
-                  >
-                    <ArrowUpRight size={12} />
-                  </a>
-                </Button>
                 {props.onExport ? (
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="ml-auto h-7 rounded-full px-2 text-[10px]"
+                    className="ml-auto h-8 rounded-full px-2.5 text-xs"
                     onClick={props.onExport}
                   >
                     Export
@@ -1453,7 +1816,7 @@ function AccountAndMandateControls(props: {
               </div>
             ) : null}
             {ownerGas.status !== 'complete' && props.config.faucetUrl ? (
-              <Button asChild variant="outline" size="sm" className="mt-4 w-full rounded-full">
+              <Button asChild variant="outline" size="sm" className="mt-3 rounded-full">
                 <a href={props.config.faucetUrl} target="_blank" rel="noreferrer">
                   Get Arc gas
                 </a>
@@ -1462,39 +1825,55 @@ function AccountAndMandateControls(props: {
           </CardContent>
         </Card>
 
-        <Card className="bg-muted shadow-none" data-step="account">
-          <CardContent className="flex h-full flex-col p-5">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-sm font-medium">Payment funds</span>
-              <Badge variant={props.account?.accountAddress ? 'default' : 'warning'}>
-                {props.account?.accountAddress ? 'Ready' : 'Not created'}
-              </Badge>
-            </div>
-            <strong className="mt-3 block text-xl">{formatUsdc(accountBalance)} USDC</strong>
-            <p className="mt-1 text-xs text-muted-foreground">
-              GOL can pay only from this balance.
-            </p>
-            {props.account?.accountAddress ? (
-              <div className="mt-auto pt-5">
-                <div className="flex items-center gap-1 font-mono text-[10px] text-muted-foreground">
-                  <code title={props.account.accountAddress}>
-                    {shorten(props.account.accountAddress)}
-                  </code>
-                  <CopyAddress value={props.account.accountAddress} />
-                  <Button asChild variant="ghost" size="icon" className="size-6 rounded-full">
-                    <a
-                      href={explorerAddressUrl(props.config, props.account.accountAddress)}
-                      target="_blank"
-                      rel="noreferrer"
-                      aria-label="View payment account on explorer"
-                    >
-                      <ArrowUpRight size={12} />
-                    </a>
-                  </Button>
+        <Card className="border-primary/20 bg-primary/[0.035] shadow-none">
+          <CardContent className="p-5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <Avatar className="size-10 border border-primary/20">
+                  <AvatarImage
+                    src={`https://api.dicebear.com/10.x/critters/svg?seed=${paymentAvatarSeed}`}
+                    alt=""
+                  />
+                  <AvatarFallback className="bg-primary/10 text-primary">
+                    <WalletCards className="size-5" aria-hidden="true" />
+                  </AvatarFallback>
+                </Avatar>
+                <div>
+                  <h3 className="text-sm font-medium">Payment funds</h3>
+                  <p className="text-xs text-muted-foreground">Available for GOL payments</p>
                 </div>
-                <div className="mt-4 grid grid-cols-2 gap-2">
+              </div>
+              {!props.account?.accountAddress ? <Badge variant="warning">Not created</Badge> : null}
+            </div>
+            <div className="mt-5 flex flex-wrap items-baseline gap-2">
+              <strong className="text-2xl tracking-tight">{formatUsdc(accountBalance)} USDC</strong>
+              <span className="text-xs text-muted-foreground">in funds</span>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+              {availablePayment < accountBalance ? (
+                <span className="rounded-full bg-muted px-2.5 py-1">
+                  {formatUsdc(availablePayment)} USDC usable under rules
+                </span>
+              ) : null}
+              {mandate && !mandate.revoked ? (
+                <span className="rounded-full bg-muted px-2.5 py-1">
+                  {formatUsdc(ruleRemaining)} USDC rule limit left
+                </span>
+              ) : null}
+            </div>
+            {props.account?.accountAddress ? (
+              <>
+                <div className="mt-4 flex items-center gap-1 text-xs text-muted-foreground">
+                  <span className="mr-1">Account</span>
+                  <ExplorerAddressLink
+                    config={props.config}
+                    address={props.account.accountAddress}
+                  />
+                  <CopyAddress value={props.account.accountAddress} />
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
                   <Button
-                    variant="outline"
+                    size="sm"
                     className="rounded-full"
                     onClick={() => props.onAction('fund_account')}
                     disabled={props.busy !== null}
@@ -1502,6 +1881,7 @@ function AccountAndMandateControls(props: {
                     Add funds
                   </Button>
                   <Button
+                    size="sm"
                     variant="outline"
                     className="rounded-full"
                     onClick={() => props.onAction('withdraw')}
@@ -1510,10 +1890,10 @@ function AccountAndMandateControls(props: {
                     Withdraw
                   </Button>
                 </div>
-              </div>
+              </>
             ) : (
               <Button
-                className="mt-5 w-full rounded-full"
+                className="mt-4 rounded-full"
                 onClick={() => props.onAction('create_account')}
                 disabled={ownerGas.status !== 'complete' || props.busy !== null}
               >
@@ -1524,48 +1904,77 @@ function AccountAndMandateControls(props: {
         </Card>
       </div>
 
-      <Card className="bg-muted shadow-none" data-step="mandate">
+      <Card className="shadow-none" data-step="mandate">
         <CardContent className="p-5">
           <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium">Agent permission</span>
-                <Badge variant={mandate && !mandate.revoked ? 'default' : 'warning'}>
-                  {mandate && !mandate.revoked ? 'On' : 'Off'}
-                </Badge>
+            <div className="flex items-center gap-3">
+              <span className="grid size-10 place-items-center rounded-xl bg-primary/10 text-primary">
+                <ShieldCheck className="size-5" aria-hidden="true" />
+              </span>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">Agent payment rules</span>
+                  <Badge variant={mandate && !mandate.revoked ? 'default' : 'warning'}>
+                    {mandate && !mandate.revoked ? 'Active' : 'Off'}
+                  </Badge>
+                </div>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Applied to every payment GOL makes.
+                </p>
               </div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Limits how much GOL can pay and where it can send funds.
-              </p>
             </div>
-            <Button
-              variant="outline"
-              className="rounded-full"
-              onClick={() => props.onAction('sign_mandate')}
-              disabled={!prerequisitesReady || props.busy !== null}
-            >
-              {mandate && !mandate.revoked ? 'Edit rules' : 'Set payment rules'}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              {agentStep.status === 'complete' ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-full"
+                  onClick={() => props.onAction('provision_agent')}
+                  disabled={props.busy !== null}
+                >
+                  Recipients
+                </Button>
+              ) : null}
+              <Button
+                variant="outline"
+                size="sm"
+                className="rounded-full"
+                onClick={() => props.onAction('sign_mandate')}
+                disabled={!prerequisitesReady || props.busy !== null}
+              >
+                {mandate && !mandate.revoked ? 'Edit rules' : 'Set payment rules'}
+              </Button>
+            </div>
           </div>
 
           {mandate && !mandate.revoked ? (
-            <div className="mt-5 grid gap-3 border-t border-border pt-5 @min-[560px]:grid-cols-3">
-              <div>
-                <span className="text-xs text-muted-foreground">Total left</span>
-                <strong className="mt-1 block text-base">
+            <div className="mt-5 grid gap-2 @min-[560px]:grid-cols-3">
+              <div className="rounded-xl border border-border bg-muted/40 p-4">
+                <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Rule limit left
+                </span>
+                <strong className="mt-2 block text-base">
                   {formatUsdc(ruleRemaining > 0n ? ruleRemaining : 0n)} USDC
                 </strong>
               </div>
-              <div>
-                <span className="text-xs text-muted-foreground">Per payment</span>
-                <strong className="mt-1 block text-base">
-                  {formatUsdc(BigInt(mandate.perPaymentCapUnits))} USDC max
+              <div className="rounded-xl border border-border bg-muted/40 p-4">
+                <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Each payment
+                </span>
+                <strong className="mt-2 block text-base">
+                  Up to {formatUsdc(BigInt(mandate.perPaymentCapUnits))} USDC
                 </strong>
               </div>
-              <div>
-                <span className="text-xs text-muted-foreground">Can pay</span>
-                <strong className="mt-1 block truncate text-base" title={recipient?.address ?? ''}>
-                  {recipient?.label ?? 'No recipient'}
+              <div className="rounded-xl border border-border bg-muted/40 p-4">
+                <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Recipient
+                </span>
+                <strong className="mt-2 block truncate text-base">
+                  {props.account?.recipientMode === 'all'
+                    ? 'Any address'
+                    : recipients.length === 1
+                      ? recipients[0]!.label
+                      : `${recipients.length} approved addresses`}
                 </strong>
               </div>
             </div>
@@ -1579,7 +1988,7 @@ function AccountAndMandateControls(props: {
             <div>
               <strong className="text-sm">Allow GOL to send approved payments</strong>
               <p className="mt-1 text-xs text-muted-foreground">
-                Choose one recipient. Your personal wallet stays out of reach.
+                Allow any exact address or add the addresses you approve.
               </p>
             </div>
             <Button
@@ -1588,7 +1997,7 @@ function AccountAndMandateControls(props: {
               onClick={() => props.onAction('provision_agent')}
               disabled={props.busy !== null}
             >
-              Choose recipient
+              Choose recipients
             </Button>
           </CardContent>
         </Card>
@@ -1635,6 +2044,31 @@ function AccountAndMandateControls(props: {
         <p className="text-xs text-muted-foreground">Finish the setup step shown above first.</p>
       ) : null}
     </div>
+  );
+}
+
+function ExplorerAddressLink({
+  config,
+  address,
+  display = 'short',
+  className = '',
+}: {
+  config: PublicConfig;
+  address: string;
+  display?: 'short' | 'full';
+  className?: string;
+}) {
+  return (
+    <a
+      href={explorerAddressUrl(config, address)}
+      target="_blank"
+      rel="noreferrer"
+      title={address}
+      className={`inline-flex min-w-0 items-center gap-1 font-mono text-primary hover:underline ${className}`}
+    >
+      <code className="truncate">{display === 'full' ? address : shorten(address)}</code>
+      <ArrowUpRight className="size-3 shrink-0" aria-hidden="true" />
+    </a>
   );
 }
 
@@ -1702,31 +2136,51 @@ function PrivateKeyWarning(props: {
 function ConsentPanel(props: {
   config: PublicConfig;
   account: AccountSnapshot | null;
-  recipientLabelInput: string;
-  setRecipientLabelInput: (value: string) => void;
-  recipientInput: string;
-  setRecipientInput: (value: string) => void;
+  recipientDrafts: RecipientDraft[];
+  setRecipientDrafts: (value: RecipientDraft[]) => void;
+  recipientMode: RecipientMode;
+  setRecipientMode: (value: RecipientMode) => void;
   onCancel: () => void;
   onConfirm: () => void;
   disabled: boolean;
 }) {
   const isKms = props.config.agentSignerProvider === 'aws_kms';
+  const allowlistInvalid =
+    props.recipientMode === 'allowlist' &&
+    (props.recipientDrafts.length === 0 ||
+      props.recipientDrafts.length > 20 ||
+      props.recipientDrafts.some(
+        (recipient) =>
+          !recipient.label.trim() || !/^0x[0-9a-fA-F]{40}$/.test(recipient.address.trim()),
+      ) ||
+      new Set(props.recipientDrafts.map((recipient) => recipient.address.trim().toLowerCase()))
+        .size !== props.recipientDrafts.length ||
+      new Set(props.recipientDrafts.map((recipient) => recipient.label.trim().toLowerCase()))
+        .size !== props.recipientDrafts.length);
+  const updateRecipient = (index: number, patch: Partial<RecipientDraft>) => {
+    props.setRecipientDrafts(
+      props.recipientDrafts.map((recipient, recipientIndex) =>
+        recipientIndex === index ? { ...recipient, ...patch } : recipient,
+      ),
+    );
+  };
   return (
     <Dialog open onOpenChange={(open) => !open && props.onCancel()}>
       <DialogContent data-testid="agent-consent" className="max-w-2xl">
         <span className="font-mono text-[9px] uppercase tracking-[.18em] text-primary">
           Payment access
         </span>
-        <DialogTitle className="mt-2 text-xl font-semibold">Choose a payment recipient</DialogTitle>
+        <DialogTitle className="mt-2 text-xl font-semibold">Choose payment recipients</DialogTitle>
         <DialogDescription className="mt-2 text-sm leading-copy">
-          Name and verify the one address GOL may pay. Nothing is selected for you.
+          Allow payments to any exact address, or maintain a list of addresses you approve.
         </DialogDescription>
         <div className="mt-5 grid gap-2 rounded-card border border-border bg-muted p-4 text-xs">
           <p>
             <strong>Uses:</strong> payment funds only
           </p>
           <p>
-            <strong>Can pay:</strong> one address you approve
+            <strong>Can pay:</strong>{' '}
+            {props.recipientMode === 'all' ? 'any exact address' : 'approved addresses only'}
           </p>
           <p>
             <strong>Cannot access:</strong> your personal wallet
@@ -1735,44 +2189,142 @@ function ConsentPanel(props: {
             <strong>You stay in control:</strong> change or turn off the rules anytime
           </p>
         </div>
-        <Label className="mt-5 block text-xs font-medium" htmlFor="recipient-label">
-          Recipient name
-        </Label>
-        <p className="mt-1 text-xs leading-copy text-muted-foreground">
-          This label is only for display. It does not verify the recipient's identity.
-        </p>
-        <Input
-          id="recipient-label"
-          className="mt-2"
-          placeholder="For example, Design contractor"
-          value={props.recipientLabelInput}
-          maxLength={100}
-          onChange={(event) => props.setRecipientLabelInput(event.target.value)}
-        />
-        <Label className="mt-5 block text-xs font-medium" htmlFor="recipient">
-          Recipient wallet address
-        </Label>
-        <p className="mt-1 text-xs leading-copy text-muted-foreground">
-          Check the complete address. GOL never guesses or prefills a recipient.
-        </p>
-        <Input
-          id="recipient"
-          className="mt-2"
-          placeholder="0x recipient wallet address"
-          value={props.recipientInput}
-          onChange={(event) => props.setRecipientInput(event.target.value)}
-        />
+        <div className="mt-5 grid grid-cols-2 gap-3" aria-label="Recipient policy">
+          <Button
+            type="button"
+            variant="outline"
+            aria-label="Allow all"
+            aria-pressed={props.recipientMode === 'all'}
+            className={`h-auto min-h-20 items-start justify-start rounded-lg border p-4 text-left ${
+              props.recipientMode === 'all'
+                ? 'border-primary bg-accent text-accent-foreground'
+                : 'bg-card'
+            }`}
+            onClick={() => props.setRecipientMode('all')}
+          >
+            <span>
+              <strong className="block">Allow all</strong>
+              <span className="mt-1 block text-xs font-normal text-muted-foreground">
+                Pay any exact address
+              </span>
+            </span>
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            aria-label="Specific addresses"
+            aria-pressed={props.recipientMode === 'allowlist'}
+            className={`h-auto min-h-20 items-start justify-start rounded-lg border p-4 text-left ${
+              props.recipientMode === 'allowlist'
+                ? 'border-primary bg-accent text-accent-foreground'
+                : 'bg-card'
+            }`}
+            onClick={() => props.setRecipientMode('allowlist')}
+          >
+            <span>
+              <strong className="block">Specific addresses</strong>
+              <span className="mt-1 block text-xs font-normal text-muted-foreground">
+                Maintain an approved list
+              </span>
+            </span>
+          </Button>
+        </div>
+        {props.recipientMode === 'allowlist' ? (
+          <div className="mt-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <strong className="text-sm">Approved addresses</strong>
+                <p className="mt-1 text-xs leading-copy text-muted-foreground">
+                  Add up to 20 exact wallet addresses. Every row is saved together.
+                </p>
+              </div>
+              <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+                {props.recipientDrafts.length}/20
+              </span>
+            </div>
+            <div className="mt-4 grid max-h-[42vh] gap-3 overflow-y-auto pr-1">
+              {props.recipientDrafts.map((recipient, index) => (
+                <div
+                  key={index}
+                  className="grid gap-3 rounded-lg border border-border bg-muted p-3 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.4fr)_auto] sm:items-end"
+                >
+                  <div>
+                    <Label className="text-xs font-medium" htmlFor={`recipient-label-${index}`}>
+                      Recipient name{index > 0 ? ` ${index + 1}` : ''}
+                    </Label>
+                    <Input
+                      id={`recipient-label-${index}`}
+                      className="mt-2"
+                      placeholder="For example, Design contractor"
+                      value={recipient.label}
+                      maxLength={100}
+                      onChange={(event) => updateRecipient(index, { label: event.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs font-medium" htmlFor={`recipient-address-${index}`}>
+                      Recipient wallet address{index > 0 ? ` ${index + 1}` : ''}
+                    </Label>
+                    <Input
+                      id={`recipient-address-${index}`}
+                      className="mt-2 font-mono"
+                      placeholder="0x recipient wallet address"
+                      value={recipient.address}
+                      onChange={(event) => updateRecipient(index, { address: event.target.value })}
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Remove recipient ${index + 1}`}
+                    disabled={props.recipientDrafts.length === 1}
+                    onClick={() =>
+                      props.setRecipientDrafts(
+                        props.recipientDrafts.filter(
+                          (_, recipientIndex) => recipientIndex !== index,
+                        ),
+                      )
+                    }
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-3 rounded-lg"
+              disabled={props.recipientDrafts.length >= 20}
+              onClick={() =>
+                props.setRecipientDrafts([...props.recipientDrafts, { label: '', address: '' }])
+              }
+            >
+              <CirclePlus className="size-4" /> Add address
+            </Button>
+            <p className="mt-3 text-xs leading-copy text-muted-foreground">
+              Check every complete address. GOL never guesses or prefills a recipient.
+            </p>
+          </div>
+        ) : (
+          <Alert className="mt-5">
+            <CircleAlert className="size-4" />
+            <div>
+              <AlertTitle>Any destination is permitted</AlertTitle>
+              <AlertDescription>
+                GOL will require an exact wallet address in every payment instruction. Amount and
+                expiry limits still apply.
+              </AlertDescription>
+            </div>
+          </Alert>
+        )}
         <div className="mt-6 grid grid-cols-2 gap-2">
           <Button variant="outline" onClick={props.onCancel}>
             Cancel
           </Button>
-          <Button
-            onClick={props.onConfirm}
-            disabled={
-              props.disabled || !props.recipientLabelInput.trim() || !props.recipientInput.trim()
-            }
-          >
-            {isKms ? 'Connect payment agent' : 'Create payment agent'} <ArrowUpRight size={14} />
+          <Button onClick={props.onConfirm} disabled={props.disabled || allowlistInvalid}>
+            {isKms ? 'Save recipient policy' : 'Create payment agent'} <ArrowUpRight size={14} />
           </Button>
         </div>
       </DialogContent>
@@ -1794,8 +2346,12 @@ function AmountEntryPanel(props: {
     event.preventDefault();
     try {
       const units = parseUsdc(amount);
-      if (isWithdraw && units > BigInt(props.availableUnits)) {
-        setError('This is more than your payment balance.');
+      if (units > BigInt(props.availableUnits)) {
+        setError(
+          isWithdraw
+            ? 'This is more than your payment balance.'
+            : 'This is more than the USDC available in your wallet.',
+        );
         return;
       }
       props.onConfirm(units.toString());
@@ -1829,11 +2385,9 @@ function AmountEntryPanel(props: {
               setError(null);
             }}
           />
-          {isWithdraw && (
-            <p className="mt-2 text-xs text-muted-foreground">
-              Available: {formatUsdc(BigInt(props.availableUnits))} USDC
-            </p>
-          )}
+          <p className="mt-2 text-xs text-muted-foreground">
+            Available: {formatUsdc(BigInt(props.availableUnits))} USDC
+          </p>
           {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
           <div className="mt-6 grid grid-cols-2 gap-2">
             <Button variant="outline" onClick={props.onCancel} type="button">
@@ -1849,10 +2403,378 @@ function AmountEntryPanel(props: {
   );
 }
 
+function SendPaymentDialog(props: {
+  config: PublicConfig;
+  account: AccountSnapshot;
+  preview: InstructionPreview | null;
+  payment: PaymentView;
+  onCancel: () => void;
+  onReview: (instruction: string) => void;
+  onCancelPreview: () => void;
+  onConfirm: () => void;
+}) {
+  const approvedRecipients = props.account.recipients.filter(
+    (recipient) => recipient.confirmed || recipient.allowedByActiveMandate,
+  );
+  const mandate = props.account.mandate;
+  const paymentFunds = BigInt(props.account.balances.accountUsdcUnits);
+  const rawLimitLeft =
+    mandate && !mandate.revoked
+      ? BigInt(mandate.cumulativeCapUnits) - BigInt(mandate.spentUnits)
+      : 0n;
+  const limitLeft = rawLimitLeft > 0n ? rawLimitLeft : 0n;
+  const availableToPay = paymentFunds < limitLeft ? paymentFunds : limitLeft;
+  const perPaymentLimit = mandate && !mandate.revoked ? BigInt(mandate.perPaymentCapUnits) : 0n;
+  const limitReached = availableToPay === 0n || perPaymentLimit === 0n;
+  const [amount, setAmount] = useState('');
+  const [recipient, setRecipient] = useState(
+    props.account.recipientMode === 'all' ? '' : (approvedRecipients[0]?.address ?? ''),
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [reviewRequested, setReviewRequested] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const allowAnyRecipient = props.account.recipientMode === 'all';
+  const processing = ['parsing', 'queued', 'signing', 'submitted', 'confirming'].includes(
+    props.payment.stage,
+  );
+  const policyWarning = (() => {
+    try {
+      const amountUnits = parseUsdc(amount);
+      if (amountUnits > perPaymentLimit) {
+        return `Above the ${formatUsdc(perPaymentLimit)} USDC per-payment contract limit. You can continue so the contract records an on-chain refusal.`;
+      }
+      if (amountUnits > limitLeft) {
+        return `Above the ${formatUsdc(limitLeft)} USDC contract limit remaining. You can continue so the contract records an on-chain refusal.`;
+      }
+      if (amountUnits > paymentFunds) {
+        return `The payment account holds ${formatUsdc(paymentFunds)} USDC. Contract rules will still be checked on-chain first.`;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  })();
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    try {
+      const amountUnits = parseUsdc(amount);
+      if (amountUnits <= 0n) {
+        setError('Enter an amount greater than 0 USDC.');
+        return;
+      }
+      const destination = recipient.trim();
+      if (!/^0x[a-fA-F0-9]{40}$/.test(destination)) {
+        setError('Enter a valid recipient wallet address.');
+        return;
+      }
+      if (
+        !allowAnyRecipient &&
+        !approvedRecipients.some((item) => item.address.toLowerCase() === destination.toLowerCase())
+      ) {
+        setError('Choose a recipient allowed by your payment rules.');
+        return;
+      }
+      setReviewRequested(true);
+      props.onReview(`Pay ${formatUsdc(amountUnits)} USDC to ${destination}`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Enter a valid USDC amount.');
+    }
+  }
+
+  function editPayment() {
+    props.onCancelPreview();
+    setReviewRequested(false);
+    setSubmitted(false);
+  }
+
+  function confirmPayment() {
+    setSubmitted(true);
+    props.onConfirm();
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && !processing && props.onCancel()}>
+      <DialogContent data-testid="send-payment-dialog">
+        <span className="font-mono text-xs uppercase tracking-[.16em] text-primary">
+          GOL payment
+        </span>
+        <DialogTitle className="mt-2 text-xl font-semibold">Send payment</DialogTitle>
+
+        {!reviewRequested ? (
+          <form onSubmit={submit}>
+            <DialogDescription className="mt-2 text-sm text-muted-foreground">
+              Enter the amount and recipient.
+            </DialogDescription>
+
+            <div className="mt-5 grid grid-cols-2 gap-3 rounded-xl border border-border bg-muted/40 p-4">
+              <div>
+                <span className="text-xs text-muted-foreground">Available now</span>
+                <strong className="mt-1 block text-base">{formatUsdc(availableToPay)} USDC</strong>
+              </div>
+              <div>
+                <span className="text-xs text-muted-foreground">Each payment</span>
+                <strong className="mt-1 block text-base">
+                  Up to {formatUsdc(perPaymentLimit)} USDC
+                </strong>
+              </div>
+            </div>
+
+            {limitReached ? (
+              <Alert className="mt-4 border-warning/30 bg-warning/10 text-warning">
+                <CircleAlert className="size-4 text-warning" aria-hidden="true" />
+                <div>
+                  <AlertTitle>Payment limit reached</AlertTitle>
+                  <AlertDescription>
+                    You may continue to demonstrate contract-enforced refusal. No USDC will be sent
+                    when a rule rejects the request.
+                  </AlertDescription>
+                </div>
+              </Alert>
+            ) : null}
+
+            <div className="mt-6 grid gap-5">
+              <div className="grid gap-2">
+                <Label htmlFor="payment-amount">Amount (USDC)</Label>
+                <Input
+                  id="payment-amount"
+                  className="h-14 rounded-xl text-xl"
+                  inputMode="decimal"
+                  autoFocus
+                  placeholder="0.00"
+                  value={amount}
+                  onChange={(event) => {
+                    setAmount(event.target.value);
+                    setError(null);
+                  }}
+                />
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="payment-recipient">
+                  Recipient{allowAnyRecipient ? '' : ` (${approvedRecipients.length})`}
+                </Label>
+                {allowAnyRecipient ? (
+                  <Input
+                    id="payment-recipient"
+                    className="h-12 rounded-xl font-mono text-sm"
+                    placeholder="0x"
+                    value={recipient}
+                    onChange={(event) => {
+                      setRecipient(event.target.value);
+                      setError(null);
+                    }}
+                  />
+                ) : (
+                  <Select
+                    value={recipient}
+                    onValueChange={(value) => {
+                      setRecipient(value);
+                      setError(null);
+                    }}
+                  >
+                    <SelectTrigger id="payment-recipient" className="h-12 rounded-xl">
+                      <SelectValue placeholder="Choose a recipient" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {approvedRecipients.map((item) => (
+                        <SelectItem key={item.address} value={item.address}>
+                          {item.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                {recipient ? (
+                  <ExplorerAddressLink
+                    config={props.config}
+                    address={recipient}
+                    className="text-xs"
+                  />
+                ) : null}
+                {!allowAnyRecipient && approvedRecipients.length > 1 ? (
+                  <p className="text-xs text-muted-foreground">
+                    Choose from {approvedRecipients.length} approved recipients.
+                  </p>
+                ) : null}
+              </div>
+            </div>
+
+            {policyWarning ? (
+              <Alert className="mt-4 border-warning/30 bg-warning/10 text-warning">
+                <ShieldCheck className="size-4 text-warning" aria-hidden="true" />
+                <div>
+                  <AlertTitle>Contract-enforced rule</AlertTitle>
+                  <AlertDescription>{policyWarning}</AlertDescription>
+                </div>
+              </Alert>
+            ) : null}
+            {error ? <p className="mt-4 text-sm text-destructive">{error}</p> : null}
+
+            <div className="mt-6 grid grid-cols-2 gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                className="rounded-full"
+                onClick={props.onCancel}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" className="rounded-full">
+                Review payment <ArrowUpRight size={14} />
+              </Button>
+            </div>
+          </form>
+        ) : props.preview && !submitted ? (
+          <div data-testid="direct-payment-review">
+            <DialogDescription className="mt-2 text-sm text-muted-foreground">
+              Check these details before sending.
+            </DialogDescription>
+            <div className="mt-6 rounded-xl border border-border bg-muted/40 p-5">
+              <span className="text-xs text-muted-foreground">Amount</span>
+              <strong className="mt-1 block text-3xl tracking-tight">
+                {props.preview.amountUsdc} USDC
+              </strong>
+              <Separator className="my-5" />
+              <span className="text-xs text-muted-foreground">Recipient</span>
+              <strong className="mt-1 block text-base">{props.preview.recipientLabel}</strong>
+              <ExplorerAddressLink
+                config={props.config}
+                address={props.preview.recipient}
+                className="mt-1 text-xs"
+              />
+              <Separator className="my-5" />
+              <span className="text-xs text-muted-foreground">Enforced by</span>
+              <strong className="mt-1 block text-base">GolAccount contract on Arc</strong>
+              {props.account.accountAddress ? (
+                <ExplorerAddressLink
+                  config={props.config}
+                  address={props.account.accountAddress}
+                  className="mt-1 text-xs"
+                />
+              ) : null}
+              <p className="mt-3 text-xs leading-copy text-muted-foreground">
+                The agent submits this request on-chain. The contract either transfers USDC or
+                records a refusal with the violated rule.
+              </p>
+            </div>
+            <div className="mt-6 grid grid-cols-2 gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                className="rounded-full"
+                onClick={editPayment}
+              >
+                Back
+              </Button>
+              <Button type="button" className="rounded-full" onClick={confirmPayment}>
+                Send payment <ArrowUpRight size={14} />
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <DirectPaymentStatus
+            config={props.config}
+            payment={props.payment}
+            onBack={editPayment}
+            onClose={props.onCancel}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DirectPaymentStatus({
+  config,
+  payment,
+  onBack,
+  onClose,
+}: {
+  config: PublicConfig;
+  payment: PaymentView;
+  onBack: () => void;
+  onClose: () => void;
+}) {
+  const pending = ['idle', 'parsing', 'queued', 'signing', 'submitted', 'confirming'].includes(
+    payment.stage,
+  );
+  const success = payment.stage === 'executed';
+  const canRetry = [
+    'needs_clarification',
+    'refused',
+    'signer_blocked',
+    'technical_failure',
+    'unknown',
+  ].includes(payment.stage);
+  const title =
+    payment.stage === 'executed'
+      ? 'Payment sent'
+      : payment.stage === 'refused'
+        ? 'Payment refused'
+        : payment.stage === 'needs_clarification'
+          ? 'Check the payment details'
+          : payment.stage === 'technical_failure' || payment.stage === 'unknown'
+            ? 'Payment could not be completed'
+            : 'Processing payment';
+
+  return (
+    <div className="mt-6" data-testid="direct-payment-status" aria-live="polite">
+      <DialogDescription className="sr-only">{title}</DialogDescription>
+      <div className="flex items-start gap-3 rounded-xl border border-border bg-muted/40 p-5">
+        <span
+          className={`grid size-10 shrink-0 place-items-center rounded-full ${success ? 'bg-success/10 text-success' : pending ? 'bg-primary/10 text-primary' : 'bg-destructive/10 text-destructive'}`}
+        >
+          {success ? (
+            <CheckCircle2 className="size-5" />
+          ) : pending ? (
+            <LoaderCircle className="size-5 animate-spin" />
+          ) : (
+            <CircleAlert className="size-5" />
+          )}
+        </span>
+        <div className="min-w-0">
+          <strong className="block text-base">{title}</strong>
+          <p className="mt-1 text-sm leading-copy text-muted-foreground">
+            {payment.detail || PAYMENT_STAGES[payment.stage].detail}
+          </p>
+          {payment.warning ? <p className="mt-2 text-xs text-warning">{payment.warning}</p> : null}
+          {payment.txHash ? (
+            <a
+              href={payment.explorerUrl ?? explorerTxUrl(config, payment.txHash)}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+            >
+              View transaction <ArrowUpRight className="size-4" />
+            </a>
+          ) : null}
+        </div>
+      </div>
+      {!pending ? (
+        <div className="mt-6 grid grid-cols-2 gap-3">
+          {canRetry ? (
+            <Button type="button" variant="outline" className="rounded-full" onClick={onBack}>
+              Try again
+            </Button>
+          ) : (
+            <span />
+          )}
+          <Button type="button" className="rounded-full" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function PaymentBudgetPanel(props: {
+  config: PublicConfig;
   availableUnits: string;
   defaultUnits: string;
-  recipient: { address: string; label: string };
+  recipients: Array<{ address: string; label: string }>;
+  allowAnyRecipient: boolean;
   accountAddress: string;
   onCancel: () => void;
   onConfirm: (amountUnits: string, perPaymentCapUnits: string, cumulativeCapUnits: string) => void;
@@ -1950,16 +2872,30 @@ function PaymentBudgetPanel(props: {
             <div className="min-w-0">
               <span className="text-muted-foreground">Funds go to</span>
               <strong className="mt-1 block">Your payment account</strong>
-              <code className="mt-1 block truncate text-[10px]" title={props.accountAddress}>
-                {shorten(props.accountAddress)}
-              </code>
+              <ExplorerAddressLink
+                config={props.config}
+                address={props.accountAddress}
+                className="mt-1 text-[10px]"
+              />
             </div>
             <div className="min-w-0">
               <span className="text-muted-foreground">GOL may only pay</span>
-              <strong className="mt-1 block">{props.recipient.label}</strong>
-              <code className="mt-1 block truncate text-[10px]" title={props.recipient.address}>
-                {shorten(props.recipient.address)}
-              </code>
+              {props.allowAnyRecipient ? (
+                <strong className="mt-1 block">Any exact address</strong>
+              ) : (
+                <ul className="mt-1 grid gap-1">
+                  {props.recipients.map((recipient) => (
+                    <li key={recipient.address}>
+                      <strong>{recipient.label}</strong>{' '}
+                      <ExplorerAddressLink
+                        config={props.config}
+                        address={recipient.address}
+                        className="text-[10px]"
+                      />
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           </div>
 
@@ -1986,6 +2922,7 @@ function PaymentBudgetPanel(props: {
 
 /** Shows the exact destination and amount before an owner is asked to sign a transfer. */
 function TransferReviewPanel(props: {
+  config: PublicConfig;
   review: TransferReview;
   onCancel: () => void;
   onConfirm: () => void;
@@ -2022,9 +2959,7 @@ function TransferReviewPanel(props: {
             <span className="text-muted-foreground">To</span>
             <strong className="mt-1 block">{props.review.destinationLabel}</strong>
             <div className="mt-2 flex items-center gap-1 text-muted-foreground">
-              <code className="truncate" title={props.review.destination}>
-                {shorten(props.review.destination)}
-              </code>
+              <ExplorerAddressLink config={props.config} address={props.review.destination} />
               <CopyAddress value={props.review.destination} />
             </div>
           </div>
@@ -2044,6 +2979,7 @@ function TransferReviewPanel(props: {
 }
 
 function MandateReviewPanel(props: {
+  config: PublicConfig;
   draft: MandateDraft;
   onChange: (draft: MandateDraft) => void;
   onCancel: () => void;
@@ -2115,14 +3051,23 @@ function MandateReviewPanel(props: {
             </dd>
           </div>
           <div className="rounded-card border border-border bg-muted p-4">
-            <dt className="text-muted-foreground">Only pay</dt>
-            <dd className="mt-1! font-medium">{props.draft.recipientLabel}</dd>
-            <code
-              className="mt-1 block text-[10px] text-muted-foreground"
-              title={props.draft.recipient}
-            >
-              {shorten(props.draft.recipient)}
-            </code>
+            <dt className="text-muted-foreground">Can pay</dt>
+            {props.draft.allowAnyRecipient ? (
+              <dd className="mt-1! font-medium">Any exact address</dd>
+            ) : (
+              <dd className="mt-1! grid gap-2">
+                {props.draft.recipients.map((recipient) => (
+                  <span key={recipient.address}>
+                    <strong>{recipient.label}</strong>{' '}
+                    <ExplorerAddressLink
+                      config={props.config}
+                      address={recipient.address}
+                      className="text-[10px]"
+                    />
+                  </span>
+                ))}
+              </dd>
+            )}
           </div>
         </dl>
         {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
@@ -2231,48 +3176,65 @@ function AaveTransactionReview({
   );
 }
 
-function TransactionStatus({ tx, config }: { tx: TransactionState; config: PublicConfig }) {
-  if (tx.phase === 'idle' || tx.kind === null) return null;
+function TransactionToast({
+  tx,
+  config,
+  theme,
+}: {
+  tx: TransactionState;
+  config: PublicConfig;
+  theme: ThemeMode;
+}) {
+  const title = transactionStatusTitle(tx);
+
+  useEffect(() => {
+    if (!title || tx.kind === null) return;
+
+    const options = {
+      id: 'owner-transaction',
+      description: tx.detail || undefined,
+      ...(tx.hash && tx.kind !== 'aave_action'
+        ? {
+            action: {
+              label: 'View',
+              onClick: () => window.open(explorerTxUrl(config, tx.hash!), '_blank', 'noreferrer'),
+            },
+          }
+        : {}),
+    };
+
+    if (tx.phase === 'awaiting_signature' || tx.phase === 'submitted') {
+      toast.loading(title, options);
+      return;
+    }
+    if (tx.phase === 'confirmed') {
+      toast.success(title, { ...options, duration: 5_000 });
+      return;
+    }
+    if (tx.phase === 'rejected') {
+      toast.warning(title, { ...options, duration: 4_500 });
+      return;
+    }
+    toast.error(title, { ...options, duration: 6_000 });
+  }, [config, title, tx.detail, tx.hash, tx.kind, tx.phase]);
+
   return (
-    <div
-      className={`mx-5 mb-5 flex flex-wrap items-center gap-3 rounded-full border px-4 py-3 text-xs sm:mx-6 ${tx.phase === 'failed' ? 'border-destructive/20 bg-destructive/10 text-destructive' : tx.phase === 'confirmed' ? 'border-success/20 bg-success/10 text-success' : 'border-primary/20 bg-accent text-accent-foreground'}`}
-      role="status"
-      data-testid="owner-transaction"
-    >
-      <strong>
-        {tx.kind === 'aave_action'
-          ? tx.phase === 'submitted'
-            ? 'Submitted to Aave network'
-            : tx.phase === 'confirmed'
-              ? 'Confirmed on Aave network'
-              : TRANSACTION_PHASES[tx.phase]
-          : TRANSACTION_PHASES[tx.phase]}
-      </strong>
-      {tx.detail && <span className="text-muted-foreground">{tx.detail}</span>}
-      {tx.hash && tx.kind !== 'aave_action' && (
-        <a
-          className="ml-auto font-mono text-[10px]"
-          href={explorerTxUrl(config, tx.hash)}
-          target="_blank"
-          rel="noreferrer"
-        >
-          {shorten(tx.hash)} ↗
-        </a>
+    <>
+      <Toaster theme={theme} />
+      {title && (
+        <span className="sr-only" role="status" data-testid="owner-transaction">
+          {title} {tx.detail}
+        </span>
       )}
-    </div>
+    </>
   );
 }
 
-function freshnessLabel(page: ActivityPage | null, lastGood: ActivityPage | null): string {
-  if (!page && !lastGood) return 'NOT LOADED';
-  if (page?.integrityMismatch) return 'INTEGRITY MISMATCH';
-  if (!page || page.freshness === 'unavailable') {
-    return lastGood ? 'UNAVAILABLE: SHOWING LAST INDEXED RESULT' : 'UNAVAILABLE';
-  }
-  if (page.freshness === 'stale') return 'STALE';
-  if (page.freshness === 'catching_up') return 'CATCHING UP';
-  if (page.freshness === 'unknown') return 'FRESHNESS UNKNOWN';
-  return 'CURRENT';
+function transactionStatusTitle(tx: TransactionState): string | null {
+  if (tx.phase === 'idle' || tx.kind === null) return null;
+  if (tx.kind === 'aave_action' && tx.phase === 'submitted') return 'Submitted to Aave network';
+  if (tx.kind === 'aave_action' && tx.phase === 'confirmed') return 'Confirmed on Aave network';
+  return TRANSACTION_PHASES[tx.phase];
 }
 
 function shorten(value: string): string {

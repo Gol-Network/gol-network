@@ -17,6 +17,9 @@ test.describe('tokenized stocks (Base hackathon mock)', () => {
   }) => {
     await page.goto('/tokenized-stocks');
     await expect(page.getByText('MOCK UI', { exact: true })).toBeVisible(READY);
+    const wordmark = page.locator('header').getByText('GOL Network', { exact: true });
+    await expect(wordmark).toBeVisible();
+    await expect(wordmark).toHaveClass(/font-pixel-wordmark/);
     await expect(page.getByRole('navigation', { name: 'Prototype experiences' })).toHaveCount(0);
 
     await page.goto('/app');
