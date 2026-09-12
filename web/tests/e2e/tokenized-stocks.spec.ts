@@ -12,13 +12,17 @@ async function openTab(page: Page) {
 test.describe('tokenized stocks (Base hackathon mock)', () => {
   test.setTimeout(120_000);
 
-  test('tab nav links the Arc page to the mock Base page', async ({ page }) => {
-    await page.goto('/');
-    await page.getByRole('link', { name: 'Tokenized stocks' }).click();
-    await expect(page).toHaveURL(/\/tokenized-stocks$/);
+  test('keeps the mock route isolated without restoring the removed prototype header', async ({
+    page,
+  }) => {
+    await page.goto('/tokenized-stocks');
     await expect(page.getByText('MOCK UI', { exact: true })).toBeVisible(READY);
-    await page.getByRole('link', { name: 'Arc testnet' }).click();
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByRole('navigation', { name: 'Prototype experiences' })).toHaveCount(0);
+
+    await page.goto('/app');
+    await expect(page).toHaveURL(/\/app$/);
+    await expect(page.getByRole('heading', { name: 'GOL Network' })).toBeVisible(READY);
+    await expect(page.getByRole('navigation', { name: 'Prototype experiences' })).toHaveCount(0);
   });
 
   test('browse a token, create a Base mandate, then record an approval and a refusal', async ({

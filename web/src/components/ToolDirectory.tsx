@@ -171,7 +171,7 @@ export function ToolDirectory() {
             </Button>
             <Button asChild variant="outline" size="sm">
               <a href="/">
-                <ArrowLeft size={14} /> Back to GOL
+                <ArrowLeft size={14} /> GOL home
               </a>
             </Button>
           </div>

@@ -33,7 +33,7 @@ test.describe('AG-UI agent workflow', () => {
 
   test.beforeEach(async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto('/');
+    await page.goto('/app');
     await page.getByRole('button', { name: 'Open fixture demo', exact: true }).click();
   });
 

@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 test.describe('wallet sidebar', () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => window.localStorage.setItem('gol-theme', 'dark'));
-    await page.goto('/');
+    await page.goto('/app');
     await page.getByRole('button', { name: 'Open fixture demo', exact: true }).click();
   });
 

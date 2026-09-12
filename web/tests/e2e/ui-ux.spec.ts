@@ -27,7 +27,7 @@ const DISCOVERED_AAVE_TOOLS = [
 test.describe('UI and UX coverage', () => {
   test('keeps setup and the action drawer usable on a mobile viewport', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto('/');
+    await page.goto('/app');
     await page.getByRole('button', { name: 'Open fixture demo', exact: true }).click();
 
     await expect(page.getByRole('heading', { name: 'Set up agent payments' })).toBeVisible();
